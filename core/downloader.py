@@ -1,6 +1,5 @@
 # core/downloader.py
 
-from core.utils import get_ffmpeg_path
 from core.utils import get_ffmpeg_path, get_ytdlp_path
 
 import os

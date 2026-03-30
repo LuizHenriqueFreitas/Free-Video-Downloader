@@ -3,8 +3,12 @@ import sys
 from PySide6.QtWidgets import QApplication
 from ui.main_window import MainWindow
 
+
 def main():
     app = QApplication(sys.argv)
+
+    # estilo opcional (dark básico)
+    app.setStyle("Fusion")
 
     window = MainWindow()
     window.show()

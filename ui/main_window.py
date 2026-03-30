@@ -1,31 +1,14 @@
-# ui/main_window.py
-
-import os
-import requests
-
 from PySide6.QtWidgets import (
-    QMainWindow,
-    QWidget,
-    QVBoxLayout,
-    QHBoxLayout,
-    QLabel,
-    QLineEdit,
-    QPushButton,
-    QComboBox,
-    QFileDialog,
-    QMessageBox,
+    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QPushButton, QScrollArea, QMessageBox
 )
-from PySide6.QtCore import QThread
 
-from services.updater import check_and_update
-from core.video_info import VideoInfo
-from ui.workers.download_worker import DownloadWorker
-from core.utils import resource_path
-from ui.widgets import ThumbnailWidget, DownloadProgressBar
+from controllers.download_controller import DownloadController
+from services.download_service import DownloadService
+from services.updater import check_and_update, get_installed_version
 
-
-TEMP_THUMBNAIL = "temp/thumbnail.jpg"
-PLACEHOLDER = resource_path("assets/placeholder.png")
+from ui.components.download_card import DownloadCard
+from ui.download_dialog import DownloadDialog
 
 
 class MainWindow(QMainWindow):
@@ -33,21 +16,20 @@ class MainWindow(QMainWindow):
         super().__init__()
 
         self.setWindowTitle("Video Downloader")
-        self.setMinimumSize(600, 600)
+        self.setMinimumSize(900, 600)
 
-        self.thread = None
-        self.worker = None
+        self.controller = DownloadController()
+        self.download_service = DownloadService()
+
+        self.cards = {}
 
         self._setup_ui()
+        self._load_history()
+        self._load_version()
 
-    def handle_update_button(self):
-        self.download_button.setEnabled(False)
-
-        success, message = check_and_update()
-
-        QMessageBox.information(self, "Atualização", message)
-
-        self.download_button.setEnabled(True)
+    # -------------------------
+    # UI
+    # -------------------------
 
     def _setup_ui(self):
         central = QWidget()
@@ -56,125 +38,127 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout()
         central.setLayout(layout)
 
+        # Top bar
         top_bar = QHBoxLayout()
-        top_bar.addStretch()
+
+        self.new_button = QPushButton("+ Colar link")
+        self.new_button.clicked.connect(self._open_download_dialog)
 
         self.update_button = QPushButton("Atualizar yt-dlp")
-        self.update_button.clicked.connect(self.handle_update_button)
+        self.update_button.clicked.connect(self._update_ytdlp)
 
+        self.version_label = QPushButton("yt-dlp: ...")
+        self.version_label.setEnabled(False)
+
+        top_bar.addWidget(self.new_button)
         top_bar.addWidget(self.update_button)
+        top_bar.addStretch()
+        top_bar.addWidget(self.version_label)
 
         layout.addLayout(top_bar)
 
-        # URL
-        layout.addWidget(QLabel("URL do vídeo:"))
-        self.url_input = QLineEdit()
-        self.url_input.editingFinished.connect(self._load_video_info)
-        layout.addWidget(self.url_input)
+        # Scroll
+        self.scroll = QScrollArea()
+        self.scroll.setWidgetResizable(True)
 
-        # Thumbnail
-        self.thumbnail = ThumbnailWidget(PLACEHOLDER)
-        layout.addWidget(self.thumbnail)
+        self.container = QWidget()
+        self.container_layout = QVBoxLayout()
+        self.container.setLayout(self.container_layout)
 
-        # Formato
-        layout.addWidget(QLabel("Formato:"))
-        self.format_selector = QComboBox()
-        self.format_selector.addItems(["MP4", "MP3"])
-        layout.addWidget(self.format_selector)
-
-        # Qualidade
-        layout.addWidget(QLabel("Qualidade:"))
-        self.quality_selector = QComboBox()
-        self.quality_selector.addItems(["Máxima", "Full HD"])
-        layout.addWidget(self.quality_selector)
-
-        # Pasta
-        layout.addWidget(QLabel("Pasta de destino:"))
-        path_layout = QHBoxLayout()
-        self.path_input = QLineEdit()
-        path_button = QPushButton("Escolher pasta")
-        path_button.clicked.connect(self._choose_folder)
-        path_layout.addWidget(self.path_input)
-        path_layout.addWidget(path_button)
-        layout.addLayout(path_layout)
-
-        # Nome
-        layout.addWidget(QLabel("Nome do arquivo (opcional):"))
-        self.filename_input = QLineEdit()
-        layout.addWidget(self.filename_input)
-
-        # Progresso
-        self.progress_bar = DownloadProgressBar()
-        layout.addWidget(self.progress_bar)
-
-        # Botão
-        self.download_button = QPushButton("Baixar")
-        self.download_button.clicked.connect(self._start_download)
-        layout.addWidget(self.download_button)
+        self.scroll.setWidget(self.container)
+        layout.addWidget(self.scroll)
 
     # -------------------------
-    # AÇÕES
+    # INIT
     # -------------------------
 
-    def _choose_folder(self):
-        folder = QFileDialog.getExistingDirectory(self, "Escolher pasta")
-        if folder:
-            self.path_input.setText(folder)
+    def _load_version(self):
+        version = get_installed_version()
+        self.version_label.setText(f"yt-dlp: {version}")
 
-    def _load_video_info(self):
-        url = self.url_input.text().strip()
-        if not url:
-            return
+    def _update_ytdlp(self):
+        success, msg = check_and_update()
+        QMessageBox.information(self, "Atualização", msg)
+        self._load_version()
 
-        try:
-            info = VideoInfo().extract(url)
-            thumb_url = info.get("thumbnail")
+    def _load_history(self):
+        items = self.controller.get_history()
 
-            if thumb_url:
-                os.makedirs("temp", exist_ok=True)
-                r = requests.get(thumb_url, timeout=10)
-                with open(TEMP_THUMBNAIL, "wb") as f:
-                    f.write(r.content)
+        for item in items:
+            self._add_card(item, start_download=False)
 
-                self.thumbnail.set_thumbnail(TEMP_THUMBNAIL)
+    # -------------------------
+    # CARDS
+    # -------------------------
 
-        except Exception as e:
-            QMessageBox.warning(self, "Erro", str(e))
+    def _add_card(self, item, start_download=True):
+        card = DownloadCard(item)
+        self.cards[item.id] = card
 
-    def _start_download(self):
-        url = self.url_input.text().strip()
-        path = self.path_input.text().strip()
+        self.container_layout.insertWidget(0, card)
 
-        if not url or not path:
-            QMessageBox.warning(self, "Erro", "URL ou pasta inválida")
-            return
+        if start_download:
+            self._start_download(item, card)
 
-        self.progress_bar.setValue(0)
+    # -------------------------
+    # DIALOG
+    # -------------------------
 
-        self.thread = QThread()
-        self.worker = DownloadWorker(
-            url=url,
-            format_type=self.format_selector.currentText(),
-            quality=self.quality_selector.currentText(),
-            output_path=path,
-            filename=self.filename_input.text().strip(),
+    def _open_download_dialog(self):
+        dialog = DownloadDialog(self)
+
+        if dialog.exec():
+            item = dialog.get_result()
+
+            if item:
+                self.controller.add_item(item)
+                self._add_card(item, start_download=True)
+
+    # -------------------------
+    # DOWNLOAD
+    # -------------------------
+
+    def _start_download(self, item, card):
+        card.on_cancel = lambda: self.download_service.cancel_download(item.id)
+
+        self.download_service.start_download(
+            item,
+            on_progress=card.update_progress,
+            on_finished=self._on_download_finished,
+            on_error=self._on_download_error,
+            on_cancel=self._on_download_cancelled
         )
 
-        self.worker.moveToThread(self.thread)
+    # -------------------------
+    # CALLBACKS
+    # -------------------------
 
-        self.thread.started.connect(self.worker.run)
-        self.worker.progress.connect(self.progress_bar.setValue)
-        self.worker.finished.connect(self._download_finished)
-        self.worker.error.connect(self._download_error)
+    def _on_download_finished(self, item):
+        card = self.cards.get(item.id)
 
-        self.worker.finished.connect(self.thread.quit)
-        self.worker.finished.connect(self.worker.deleteLater)
-        self.thread.finished.connect(self.thread.deleteLater)
+        if card:
+            card.update_status("completed")
 
-        self.thread.start()
+        self.controller.update_item(item)
+        self.download_service.cleanup(item.id)
 
-    def _download_finished(self):
-        QMessageBox.information(self, "Sucesso", "Download concluído!")
+    def _on_download_error(self, item, msg):
+        card = self.cards.get(item.id)
 
-    def _download_error(self, msg):
+        if card:
+            card.update_status("error")
+
+        self.controller.update_item(item)
+
         QMessageBox.critical(self, "Erro", msg)
+
+        self.download_service.cleanup(item.id)
+
+    def _on_download_cancelled(self, item):
+        card = self.cards.get(item.id)
+
+        if card:
+            card.update_status("cancelled")
+
+        self.controller.update_item(item)
+        self.download_service.cleanup(item.id)
