@@ -1,4 +1,5 @@
-#services/updater
+#services/updater.py
+
 import os
 import requests
 import shutil

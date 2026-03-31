@@ -1,3 +1,5 @@
+# services/download_service.py
+
 from PySide6.QtCore import QThread
 from ui.workers.download_worker import DownloadWorker
 
@@ -12,29 +14,79 @@ class DownloadService:
 
         worker.moveToThread(thread)
 
+        self.active_downloads[item.id] = {
+            "thread": thread,
+            "worker": worker
+        }
+
+        # START
         thread.started.connect(worker.run)
+
+        # SIGNALS
         worker.progress.connect(on_progress)
-        worker.finished.connect(on_finished)
-        worker.error.connect(on_error)
-        worker.cancelled.connect(on_cancel)
 
-        # cleanup correto
+        worker.finished.connect(lambda i: self._finish(item.id, on_finished, i))
+        worker.error.connect(lambda i, msg: self._error(item.id, on_error, i, msg))
+        worker.cancelled.connect(lambda i: self._cancel(item.id, on_cancel, i))
+
+        # THREAD CONTROL (CRÍTICO)
         worker.finished.connect(thread.quit)
-        worker.error.connect(lambda *_: thread.quit())
-        worker.cancelled.connect(lambda *_: thread.quit())
-
-        thread.finished.connect(thread.deleteLater)
-        thread.finished.connect(worker.deleteLater)
-
-        self.active_downloads[item.id] = (thread, worker)
+        worker.error.connect(thread.quit)
+        worker.cancelled.connect(thread.quit)
 
         thread.start()
 
+    # ==========================
+    # HANDLERS
+    # ==========================
+
+    def _finish(self, item_id, callback, item):
+        print("✅ FINISHED")
+        try:
+            callback(item)
+        finally:
+            self._cleanup_safe(item_id)
+
+    def _error(self, item_id, callback, item, msg):
+        print("❌ ERROR:", msg)
+        try:
+            callback(item, msg)
+        finally:
+            self._cleanup_safe(item_id)
+
+    def _cancel(self, item_id, callback, item):
+        print("⚠️ CANCEL")
+        try:
+            callback(item)
+        finally:
+            self._cleanup_safe(item_id)
+
+    # ==========================
+    # CLEANUP SEGURO
+    # ==========================
+    def _cleanup_safe(self, item_id):
+        if item_id not in self.active_downloads:
+            return
+
+        data = self.active_downloads[item_id]
+        thread = data["thread"]
+        worker = data["worker"]
+
+        try:
+            if thread.isRunning():
+                thread.quit()
+
+            worker.deleteLater()
+            thread.deleteLater()
+
+        except Exception as e:
+            print("Erro cleanup:", e)
+
+        del self.active_downloads[item_id]
+
+    # ==========================
+    # CANCEL
+    # ==========================
     def cancel_download(self, item_id):
         if item_id in self.active_downloads:
-            _, worker = self.active_downloads[item_id]
-            worker.cancel()
-
-    def cleanup(self, item_id):
-        if item_id in self.active_downloads:
-            del self.active_downloads[item_id]
+            self.active_downloads[item_id]["worker"].cancel()

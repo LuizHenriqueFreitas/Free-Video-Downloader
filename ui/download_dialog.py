@@ -1,5 +1,6 @@
+# ui/download_dialog.py
+
 import os
-import uuid
 import requests
 
 from PySide6.QtWidgets import (
@@ -7,13 +8,15 @@ from PySide6.QtWidgets import (
     QLabel, QLineEdit, QPushButton,
     QComboBox, QFileDialog, QMessageBox
 )
+from PySide6.QtCore import QTimer
 
 from core.video_info import VideoInfo
-from core.utils import resource_path
+from core.utils import resource_path, cookies_exists
 from ui.components.thumbnail_widget import ThumbnailWidget
 from models.download_item import DownloadItem
 
 
+TEMP_THUMBNAIL = "temp/thumbnail.jpg"
 PLACEHOLDER = resource_path("assets/placeholder.png")
 
 
@@ -26,7 +29,11 @@ class DownloadDialog(QDialog):
 
         self.video_info = None
         self.download_item = None
-        self.thumbnail_path = None
+
+        # debounce timer
+        self.load_timer = QTimer()
+        self.load_timer.setSingleShot(True)
+        self.load_timer.timeout.connect(self._load_video_info)
 
         self._setup_ui()
 
@@ -41,9 +48,12 @@ class DownloadDialog(QDialog):
         # URL
         layout.addWidget(QLabel("URL do vídeo:"))
         self.url_input = QLineEdit()
-        self.url_input.setPlaceholderText("Cole o link e pressione ENTER")
-        self.url_input.returnPressed.connect(self._load_video_info)
+        self.url_input.textChanged.connect(self._on_url_changed)
         layout.addWidget(self.url_input)
+
+        # Status (feedback UX)
+        self.status_label = QLabel("")
+        layout.addWidget(self.status_label)
 
         # Thumbnail
         self.thumbnail = ThumbnailWidget(PLACEHOLDER)
@@ -71,6 +81,7 @@ class DownloadDialog(QDialog):
 
         path_layout.addWidget(self.path_input)
         path_layout.addWidget(path_button)
+
         layout.addLayout(path_layout)
 
         # Nome
@@ -81,16 +92,28 @@ class DownloadDialog(QDialog):
         # Botões
         button_layout = QHBoxLayout()
 
-        cancel_button = QPushButton("Cancelar")
-        cancel_button.clicked.connect(self.reject)
+        self.cancel_button = QPushButton("Cancelar")
+        self.cancel_button.clicked.connect(self.reject)
 
-        ok_button = QPushButton("Adicionar")
-        ok_button.clicked.connect(self._confirm)
+        self.ok_button = QPushButton("Adicionar")
+        self.ok_button.clicked.connect(self._confirm)
 
-        button_layout.addWidget(cancel_button)
-        button_layout.addWidget(ok_button)
+        button_layout.addWidget(self.cancel_button)
+        button_layout.addWidget(self.ok_button)
 
         layout.addLayout(button_layout)
+
+    # -------------------------
+    # EVENTOS
+    # -------------------------
+
+    def _on_url_changed(self):
+        text = self.url_input.text().strip()
+
+        # evita chamadas desnecessárias
+        if "youtube.com" in text or "youtu.be" in text:
+            self.status_label.setText("Carregando informações...")
+            self.load_timer.start(800)
 
     # -------------------------
     # AÇÕES
@@ -103,33 +126,38 @@ class DownloadDialog(QDialog):
 
     def _load_video_info(self):
         url = self.url_input.text().strip()
+
         if not url:
+            return
+
+        if not cookies_exists():
+            self.status_label.setText("⚠ Cookies não configurados")
             return
 
         try:
             info = VideoInfo().extract(url)
             self.video_info = info
 
-            # thumbnail único
+            # thumbnail
             thumb_url = info.get("thumbnail")
             if thumb_url:
                 os.makedirs("temp", exist_ok=True)
 
-                self.thumbnail_path = f"temp/{uuid.uuid4()}.jpg"
-
                 r = requests.get(thumb_url, timeout=10)
-                with open(self.thumbnail_path, "wb") as f:
+                with open(TEMP_THUMBNAIL, "wb") as f:
                     f.write(r.content)
 
-                self.thumbnail.set_thumbnail(self.thumbnail_path)
+                self.thumbnail.set_thumbnail(TEMP_THUMBNAIL)
 
-            # auto nome
+            # nome automático
             title = info.get("title", "")
             if title:
                 self.filename_input.setText(title)
 
+            self.status_label.setText("✔ Informações carregadas")
+
         except Exception as e:
-            QMessageBox.warning(self, "Erro", str(e))
+            self.status_label.setText(f"Erro: {str(e)}")
 
     def _confirm(self):
         url = self.url_input.text().strip()
@@ -140,7 +168,7 @@ class DownloadDialog(QDialog):
             return
 
         if not self.video_info:
-            QMessageBox.warning(self, "Erro", "Carregue o vídeo primeiro (ENTER)")
+            QMessageBox.warning(self, "Erro", "Carregue as informações do vídeo primeiro")
             return
 
         filename = self.filename_input.text().strip()
@@ -150,7 +178,7 @@ class DownloadDialog(QDialog):
             title=filename if filename else self.video_info.get("title", "Sem título"),
             format_type=self.format_selector.currentText(),
             quality=self.quality_selector.currentText(),
-            thumbnail=self.thumbnail_path or "",
+            thumbnail=TEMP_THUMBNAIL,
             status="pending",
         )
 

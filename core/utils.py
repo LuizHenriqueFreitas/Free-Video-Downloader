@@ -1,4 +1,5 @@
 # core/utils.py
+
 import sys
 import os
 
@@ -28,3 +29,16 @@ def get_ffmpeg_path():
     else:
         # Em desenvolvimento
         return resource_path("tools/ffmpeg/bin/")
+
+def get_node_path():
+    path = resource_path("bin/node/node.exe")
+    if not os.path.exists(path):
+        raise Exception("Node não encontrado no projeto")
+    return path
+
+def get_cookies_path():
+    return resource_path("data/cookies.txt")
+
+
+def cookies_exists():
+    return os.path.exists(get_cookies_path())

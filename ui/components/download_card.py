@@ -1,3 +1,5 @@
+#ui/components/download_card.py
+
 import os
 import subprocess
 
@@ -22,6 +24,8 @@ class DownloadCard(QWidget):
     def _setup_ui(self):
         main_layout = QHBoxLayout()
         self.setLayout(main_layout)
+
+        self.setFixedHeight(120)
 
         # THUMBNAIL
         self.thumbnail_label = QLabel()
@@ -59,6 +63,7 @@ class DownloadCard(QWidget):
         self.progress = QProgressBar()
         self.progress.setRange(0, 100)
         self.progress.setValue(0)
+        self.progress.setVisible(False)
 
         info_layout.addWidget(self.progress)
 

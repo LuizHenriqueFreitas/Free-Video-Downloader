@@ -23,6 +23,7 @@ ui/__init__.py
 # Temporary runtime files
 # ========================
 temp/
+data/*
 bin/*.backup
 bin/*.new
 
@@ -38,9 +39,11 @@ dist/
 # External tools (large binaries)
 # ========================
 tools/ffmpeg/
+/bin/node/*
 
 # ========================
 # OS files
 # ========================
 .DS_Store
 Thumbs.db
+
