@@ -5,9 +5,7 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
-
-core/__init__.py 
-ui/__init__.py 
+.pytest_cache
 
 # ========================
 # Virtual Environment

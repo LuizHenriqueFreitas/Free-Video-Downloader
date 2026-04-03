@@ -1,4 +1,4 @@
-#ui/components/download_card.py
+# ui/components/download_card.py
 
 import os
 import subprocess
@@ -21,30 +21,29 @@ class DownloadCard(QWidget):
         self._setup_ui()
         self._apply_status()
 
+    # -------------------------
+    # UI
+    # -------------------------
     def _setup_ui(self):
         main_layout = QHBoxLayout()
         self.setLayout(main_layout)
 
         self.setFixedHeight(120)
 
+        # ----------------------
         # THUMBNAIL
+        # ----------------------
         self.thumbnail_label = QLabel()
         self.thumbnail_label.setFixedSize(160, 90)
         self.thumbnail_label.setStyleSheet("border: 1px solid #444;")
 
-        if self.item.thumbnail and os.path.exists(self.item.thumbnail):
-            pixmap = QPixmap(self.item.thumbnail)
-            self.thumbnail_label.setPixmap(
-                pixmap.scaled(
-                    self.thumbnail_label.size(),
-                    Qt.KeepAspectRatio,
-                    Qt.SmoothTransformation
-                )
-            )
+        self._load_thumbnail()
 
         main_layout.addWidget(self.thumbnail_label)
 
+        # ----------------------
         # INFO
+        # ----------------------
         info_layout = QVBoxLayout()
 
         self.title_label = QLabel(self.item.title)
@@ -56,10 +55,17 @@ class DownloadCard(QWidget):
         )
         self.meta_label.setStyleSheet("color: gray;")
 
+        # 🔥 NOVO → status texto
+        self.status_label = QLabel("")
+        self.status_label.setStyleSheet("color: #BBBBBB; font-size: 11px;")
+
         info_layout.addWidget(self.title_label)
         info_layout.addWidget(self.meta_label)
+        info_layout.addWidget(self.status_label)
 
+        # ----------------------
         # PROGRESSO
+        # ----------------------
         self.progress = QProgressBar()
         self.progress.setRange(0, 100)
         self.progress.setValue(0)
@@ -69,7 +75,9 @@ class DownloadCard(QWidget):
 
         main_layout.addLayout(info_layout)
 
+        # ----------------------
         # DIREITA
+        # ----------------------
         right_layout = QVBoxLayout()
 
         self.status_dot = QLabel()
@@ -97,20 +105,56 @@ class DownloadCard(QWidget):
         """)
 
     # -------------------------
+    # THUMBNAIL
+    # -------------------------
+    def _load_thumbnail(self):
+        if self.item.thumbnail and os.path.exists(self.item.thumbnail):
+            pixmap = QPixmap(self.item.thumbnail)
+
+            if not pixmap.isNull():
+                self.thumbnail_label.setPixmap(
+                    pixmap.scaled(
+                        self.thumbnail_label.size(),
+                        Qt.KeepAspectRatio,
+                        Qt.SmoothTransformation
+                    )
+                )
+                return
+
+        # fallback
+        self.thumbnail_label.setText("Sem imagem")
+        self.thumbnail_label.setAlignment(Qt.AlignCenter)
+
+    # -------------------------
     # STATUS
     # -------------------------
-
     def _apply_status(self):
-        color = "#9E9E9E"
+        status = self.item.status
 
-        if self.item.status == "downloading":
+        color = "#9E9E9E"
+        text = ""
+
+        if status == "queued":
+            color = "#607D8B"
+            text = "Na fila..."
+
+        elif status == "downloading":
             color = "#FFC107"
-        elif self.item.status == "completed":
+            text = "Baixando..."
+
+        elif status == "completed":
             color = "#4CAF50"
-        elif self.item.status == "error":
+            text = "Concluído"
+
+        elif status == "error":
             color = "#F44336"
-        elif self.item.status == "cancelled":
+            text = "Erro"
+
+        elif status == "cancelled":
             color = "#9E9E9E"
+            text = "Cancelado"
+
+        self.status_label.setText(text)
 
         self.status_dot.setStyleSheet(f"""
             background-color: {color};
@@ -118,12 +162,17 @@ class DownloadCard(QWidget):
         """)
 
         # comportamento
-        if self.item.status == "downloading":
+        if status == "queued":
+            self.progress.setVisible(False)
+            self.cancel_btn.setEnabled(True)
+            self.open_btn.setEnabled(False)
+
+        elif status == "downloading":
             self.progress.setVisible(True)
             self.cancel_btn.setEnabled(True)
             self.open_btn.setEnabled(False)
 
-        elif self.item.status == "completed":
+        elif status == "completed":
             self.progress.setVisible(False)
             self.cancel_btn.setEnabled(False)
             self.open_btn.setEnabled(True)
@@ -136,8 +185,9 @@ class DownloadCard(QWidget):
     # -------------------------
     # AÇÕES
     # -------------------------
-
     def update_progress(self, value):
+        # proteção extra
+        value = max(0, min(100, value))
         self.progress.setValue(value)
 
     def update_status(self, status):

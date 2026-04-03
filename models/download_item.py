@@ -1,13 +1,9 @@
-#models/download_item.py
-
 import uuid
 from datetime import datetime
 import re
 
-
 def sanitize_filename(name):
     return re.sub(r'[\\/*?:"<>|]', "", name)
-
 
 class DownloadItem:
     def __init__(
@@ -16,6 +12,7 @@ class DownloadItem:
         title,
         format_type,
         quality,
+        quality_id=None,            # novo campo
         thumbnail="",
         status="pending",
         file_path="",
@@ -29,6 +26,7 @@ class DownloadItem:
 
         self.format_type = format_type
         self.quality = quality
+        self.quality_id = quality_id   # armazena o ID do formato (ex: "137+140")
 
         self.thumbnail = thumbnail
         self.status = status
@@ -46,6 +44,7 @@ class DownloadItem:
             "title": self.title,
             "format_type": self.format_type,
             "quality": self.quality,
+            "quality_id": self.quality_id,        # incluído
             "thumbnail": self.thumbnail,
             "status": self.status,
             "file_path": self.file_path,
@@ -61,6 +60,7 @@ class DownloadItem:
             title=data.get("title"),
             format_type=data.get("format_type"),
             quality=data.get("quality"),
+            quality_id=data.get("quality_id"),      # incluído
             thumbnail=data.get("thumbnail", ""),
             status=data.get("status", "pending"),
             file_path=data.get("file_path", ""),

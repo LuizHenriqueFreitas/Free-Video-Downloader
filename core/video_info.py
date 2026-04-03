@@ -1,12 +1,8 @@
+# core/video_info.py
 import subprocess
 import json
 
-
-from core.utils import (
-    get_ytdlp_path,
-    get_cookies_path,
-    cookies_exists
-)
+from core.utils import get_ytdlp_path, get_cookies_path, cookies_exists
 
 
 class VideoInfo:
@@ -16,25 +12,24 @@ class VideoInfo:
 
         ytdlp_path = get_ytdlp_path()
 
+        # yt-dlp command line
         command = [
             ytdlp_path,
-
-            # 🔥 ESSENCIAL PRA YOUTUBE HOJE
             "--user-agent", "Mozilla/5.0",
-            "--extractor-args", "youtube:player_client=android,web,tv",
-
+            "--js-runtime", "node:bin/node/node.exe", 
+            "--extractor-args", "youtube:player_client=web_safari,android_vr",
             "--no-playlist",
             "--skip-download",
             "-j",
             url
         ]
 
-        # 🔐 cookies (se existirem)
+        # add cookies to yt-dlp command line
         if cookies_exists():
             command += ["--cookies", get_cookies_path()]
 
-        print("\n🔍 EXTRAINDO INFO:")
-        print(" ".join(command), "\n")
+        print("\n🔍 EXTRAINDO INFO:")  # debug
+        print(" ".join(command), "\n")  # debug
 
         result = subprocess.run(
             command,
@@ -59,63 +54,87 @@ class VideoInfo:
     def _format_response(self, info: dict):
         formats = info.get("formats", [])
 
-        # 🎯 filtra só vídeos com resolução
+        # 🎯 separa vídeos e áudios
         video_formats = [
             f for f in formats
-            if f.get("vcodec") != "none"
-            and f.get("height")
+            if f.get("vcodec") != "none" and f.get("height")
+        ]
+        audio_formats = [
+            f for f in formats
+            if f.get("acodec") != "none" and f.get("vcodec") == "none"
         ]
 
-        # 🎯 ordena por resolução
+        # ordena por resolução ou bitrate
         video_formats.sort(key=lambda x: x.get("height", 0))
+        audio_formats.sort(key=lambda x: x.get("abr", 0))
 
-        # 🎯 remove duplicados (mesma resolução)
+        # remove duplicados por resolução+ext para vídeos
         seen = set()
-        unique_formats = []
-
-        for f in reversed(video_formats):  # começa do maior
+        unique_video_formats = []
+        for f in reversed(video_formats):  # maior primeiro
             h = f.get("height")
-            if h not in seen:
-                seen.add(h)
-                unique_formats.append({
+            ext = f.get("ext")
+            key = (h, ext)
+            if key not in seen:
+                seen.add(key)
+                unique_video_formats.append({
                     "height": h,
-                    "ext": f.get("ext"),
+                    "ext": ext,
+                    "fps": f.get("fps"),
                     "format_id": f.get("format_id")
                 })
+        unique_video_formats.reverse()  # menor para maior UI
 
-        # ordena crescente pra UI
-        unique_formats.reverse()
+        # remove duplicados por ext e bitrate para áudios
+        seen_audio = set()
+        unique_audio_formats = []
+        for f in reversed(audio_formats):  # maior bitrate primeiro
+            ext = f.get("ext")
+            abr = f.get("abr")
+            key = (ext, abr)
+            if key not in seen_audio:
+                seen_audio.add(key)
+                unique_audio_formats.append({
+                    "ext": ext,
+                    "abr": abr,
+                    "format_id": f.get("format_id")
+                })
+        unique_audio_formats.reverse()  # menor para maior UI
 
         return {
             "title": info.get("title", "Sem título"),
             "thumbnail": info.get("thumbnail"),
             "duration": info.get("duration"),
-            "formats": unique_formats,
-            "raw_formats": formats,  # útil pra debug
+            "formats": unique_video_formats,     # vídeos filtrados
+            "audio_formats": unique_audio_formats,  # áudios filtrados
+            "raw_formats": formats,              # tudo bruto para debug
         }
 
     # ==========================
-    # TRATAMENTO DE ERROS
+    # ERRORS
     # ==========================
-    def _parse_error(self, stderr: str):
-        stderr = stderr.lower()
+    def _parse_error(self, stderr: str) -> str:
+        s = stderr.lower()
 
-        if "confirm you’re not a bot" in stderr:
-            return "YouTube bloqueou a requisição. Atualize seus cookies."
+        if "confirm you're not a bot" in s:
+            return "YouTube bloqueou"
 
-        if "429" in stderr:
-            return "Muitas requisições. Aguarde alguns minutos."
+        if "captcha" in s:
+            return "YouTube bloqueou"
 
-        if "cookies" in stderr:
-            return "Erro com cookies. Verifique ou atualize o cookies.txt."
+        if "429" in s:
+            return "Muitas requisições"
 
-        if "unsupported url" in stderr:
-            return "URL não suportada."
+        if "cookies" in s:
+            return "Erro com cookies"
 
-        if "private video" in stderr:
-            return "Vídeo privado."
+        if "unsupported" in s:
+            return "URL não suportada"
 
-        if "sign in" in stderr:
-            return "É necessário estar logado (cookies)."
+        if "private" in s:
+            return "Vídeo privado"
 
-        return stderr.strip() or "Erro desconhecido ao obter informações"
+        if "sign in" in s:
+            return "É necessário estar logado"
+
+        return stderr
