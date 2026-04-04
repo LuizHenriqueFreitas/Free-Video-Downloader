@@ -24,7 +24,7 @@ temp/
 data/*
 bin/*.backup
 bin/*.new
-
+*.nsi
 
 # ========================
 # PyInstaller
@@ -32,6 +32,8 @@ bin/*.new
 build/
 dist/
 *.spec
+
+*Setup.exe
 
 # ========================
 # External tools (large binaries)

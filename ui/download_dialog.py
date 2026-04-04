@@ -1,3 +1,5 @@
+# ui/download_dialog.py
+
 import os
 import requests
 from uuid import uuid4
@@ -233,29 +235,53 @@ class DownloadDialog(QDialog):
         self.status_label.setText(f"Erro: {msg}")
 
     # ==========================
-    # QUALIDADE
+    # QUALIDADE (com tamanho)
     # ==========================
     def _populate_quality_selector(self):
         if not self.video_info:
             return
 
         formats = self.video_info.get("formats", [])
-
-        mp4_formats = [
+        # Captura TODOS os formatos de vídeo (qualquer extensão) com altura definida
+        video_formats = [
             f for f in formats
-            if f.get("ext") == "mp4" and f.get("height")
+            if f.get("height") and f.get("vcodec") != "none"
         ]
 
-        mp4_formats.sort(key=lambda x: x.get("height", 0), reverse=True)
+        # Agrupa por altura (pega o melhor formato para cada altura, ex: maior bitrate)
+        unique_heights = {}
+        for f in video_formats:
+            height = f.get("height")
+            if height not in unique_heights:
+                unique_heights[height] = f
+            else:
+                # Critério: maior bitrate total (tbr) ou maior fps
+                if f.get("tbr", 0) > unique_heights[height].get("tbr", 0):
+                    unique_heights[height] = f
+
+        sorted_heights = sorted(unique_heights.keys(), reverse=True)
 
         self.quality_selector.clear()
+        for height in sorted_heights:
+            f = unique_heights[height]
+            label = f"{height}p"
+            filesize = f.get("filesize") or f.get("filesize_approx")
+            if filesize:
+                size_mb = filesize / (1024 * 1024)
+                if size_mb >= 1024:
+                    label += f" ({size_mb/1024:.1f} GB)"
+                else:
+                    label += f" ({size_mb:.1f} MB)"
+            else:
+                label += " (tamanho desconhecido)"
 
-        for f in mp4_formats:
-            label = f"{f.get('height')}p"
-            self.quality_selector.addItem(label, f.get("format_id"))
+            # quality_id SEM restrição de extensão, para permitir WebM 4K
+            quality_id = f"bestvideo[height<={height}]+bestaudio/best[height<={height}]"
+            self.quality_selector.addItem(label, (quality_id, filesize))
 
-        self.quality_selector.setEnabled(len(mp4_formats) > 0)
-
+        self.quality_selector.setEnabled(len(sorted_heights) > 0)
+        if not sorted_heights:
+            self.quality_selector.addItem("Nenhum formato disponível", (None, None))
     # ==========================
     # AÇÕES
     # ==========================
@@ -279,20 +305,29 @@ class DownloadDialog(QDialog):
         filename = self.filename_input.text().strip()
 
         selected_quality_id = None
+        selected_filesize = None
+
         if self.format_selector.currentText().upper() == "MP4":
-            selected_quality_id = self.quality_selector.currentData()
+            data = self.quality_selector.currentData()
+            if data and isinstance(data, tuple):
+                selected_quality_id, selected_filesize = data
+
+        # Título final: se nome personalizado, usa ele; senão usa título original
+        original_title = self.video_info.get("title", "Sem título")
+        final_title = filename if filename else original_title
 
         self.download_item = DownloadItem(
             url=url,
-            title=filename if filename else self.video_info.get("title", "Sem título"),
+            title=final_title,
+            original_title=original_title,
             format_type=self.format_selector.currentText(),
             quality=self.quality_selector.currentText(),
             quality_id=selected_quality_id,
             thumbnail=self._current_thumb_path,
             status="pending",
+            output_path=path,
+            filesize=selected_filesize,
         )
-
-        self.download_item.output_path = path
 
         self.accept()
 

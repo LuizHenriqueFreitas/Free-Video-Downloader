@@ -2,6 +2,7 @@ import os
 import glob
 import re
 import subprocess
+import sys
 
 from PySide6.QtCore import QObject, Signal
 
@@ -35,6 +36,7 @@ def has_audio(file_path: str, ffmpeg_path: str) -> bool:
     except Exception:
         return False
 
+
 class DownloadWorker(QObject):
     progress = Signal(int)
     finished = Signal(object)
@@ -55,14 +57,29 @@ class DownloadWorker(QObject):
             print(f"\n🚀 Iniciando download: {self.item.title}")
             self.item.status = "downloading"
 
+            # Limpa arquivos residuais do yt-dlp
+            safe_title = safe_filename(self.item.title)
+            base = os.path.join(self.item.output_path, safe_title)
+            patterns = [f"{base}*.part", f"{base}*.ytdl", f"{base}*.temp", f"{base}*.frag*"]
+            for pattern in patterns:
+                for f in glob.glob(pattern):
+                    try:
+                        os.remove(f)
+                        print(f"🗑️ Removido: {f}")
+                    except Exception as e:
+                        print(f"⚠️ Erro ao remover {f}: {e}")
+
+            # Construir comando e executar
             command = self._build_command()
             success = self._run_process(command)
 
             if not success:
+                if self.item.status == "cancelled":
+                    print("✅ Download cancelado pelo usuário.")
+                    return
                 raise Exception("Falha no download (yt-dlp retornou erro)")
 
             final_path = self._find_downloaded_file()
-
             if not final_path or not os.path.exists(final_path):
                 raise Exception("Arquivo final não encontrado")
 
@@ -94,15 +111,13 @@ class DownloadWorker(QObject):
             "-o", output_template,
             "--ffmpeg-location", ffmpeg_path,
             "--no-playlist",
-            "--no-part",              # Evita arquivos .part que atrapalham a verificação
+            "--no-part",
             "--no-check-certificates",
         ]
 
-        # Cookies
         if cookies_exists():
             command += ["--cookies", get_cookies_path()]
 
-        # JS Runtime
         node_path = get_node_path()
         if node_path and os.path.exists(node_path):
             command += ["--js-runtime", f"node:{node_path}"]
@@ -119,18 +134,22 @@ class DownloadWorker(QObject):
             ]
             return command
 
-        # MP4 - SEMPRE a MAIOR QUALIDADE disponível
+        # MP4
         if self.item.format_type.upper() == "MP4":
-            # Seleção de formato: prioriza vídeo mp4 + áudio m4a, fallback para qualquer combinação que funcione
-            # Usa os clientes que dão acesso a streams DASH de alta resolução
-            video_format = "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best"
-            
+            # Valida o quality_id: se for algo como "1080p" (texto), não funciona.
+            # Nesse caso, usa fallback.
+            if self.item.quality_id and "+" in self.item.quality_id:
+                video_format = self.item.quality_id
+            else:
+                video_format = "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best"
+
             command += [
                 "--extractor-args", "youtube:player_client=web_safari,android_vr",
                 "-f", video_format,
                 "--merge-output-format", "mp4",
-                "--postprocessor-args", "ffmpeg:-c:v copy -c:a aac",  # opcional, garante aac
-                "--no-mtime",  # Não modifica timestamps, evita problemas
+                "--postprocessor-args", "ffmpeg:-c:v copy -c:a aac",
+                "--no-mtime",
+                "--no-continue",
             ]
             return command
 
@@ -138,10 +157,15 @@ class DownloadWorker(QObject):
 
     # ==========================
     # PROCESS
-        # ==========================
+    # ==========================
     def _run_process(self, command):
         print("\n📦 COMANDO EXECUTADO:")
         print(" ".join(command), "\n")
+
+        # 🔥 Configuração para ocultar janela do console no Windows
+        creationflags = 0
+        if sys.platform == "win32":
+            creationflags = subprocess.CREATE_NO_WINDOW  # 0x08000000
 
         self.process = subprocess.Popen(
             command,
@@ -149,11 +173,12 @@ class DownloadWorker(QObject):
             stderr=subprocess.STDOUT,
             text=True,
             bufsize=1,
+            creationflags=creationflags,   # <-- adicionado
         )
 
         last_percent = 0
         merge_started = False
-        final_percent_emitted = False
+        final_emitted = False
 
         for line in self.process.stdout:
             if not line:
@@ -168,23 +193,18 @@ class DownloadWorker(QObject):
                 self.cancelled.emit(self.item)
                 return False
 
-            # Detecta início do merge
             if "Merging formats" in line:
                 merge_started = True
                 continue
 
-            # Progresso do download
             if "[download]" in line and "%" in line:
                 try:
                     percent_str = line.split("%")[0].split()[-1]
                     percent = float(percent_str)
 
-                    # Se o merge já começou, ignora qualquer linha de progresso
                     if merge_started:
                         continue
-
-                    # Emite apenas se for maior que o último e for < 100
-                    # O 100% do stream não é emitido (será emitido no final)
+                    # Só emite se for maior que o último e < 100
                     if percent > last_percent and percent < 100:
                         last_percent = percent
                         self.progress.emit(int(percent))
@@ -192,10 +212,10 @@ class DownloadWorker(QObject):
                     pass
 
         self.process.wait()
-        # Só emite 100% após o merge completo e uma única vez
-        if not final_percent_emitted:
+        # Emite 100% apenas uma vez no final
+        if not final_emitted:
             self.progress.emit(100)
-            final_percent_emitted = True
+            final_emitted = True
 
         return self.process.returncode == 0
 

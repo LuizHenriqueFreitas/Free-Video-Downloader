@@ -1,8 +1,10 @@
 # core/video_info.py
+
 import subprocess
 import json
+import sys
 
-from core.utils import get_ytdlp_path, get_cookies_path, cookies_exists
+from core.utils import get_ytdlp_path, get_cookies_path, cookies_exists, get_node_path
 
 
 class VideoInfo:
@@ -11,12 +13,13 @@ class VideoInfo:
             raise ValueError("URL vazia")
 
         ytdlp_path = get_ytdlp_path()
+        node_path = get_node_path()
 
         # yt-dlp command line
         command = [
             ytdlp_path,
             "--user-agent", "Mozilla/5.0",
-            "--js-runtime", "node:bin/node/node.exe", 
+            "--js-runtime", f"node:{node_path}",
             "--extractor-args", "youtube:player_client=web_safari,android_vr",
             "--no-playlist",
             "--skip-download",
@@ -31,10 +34,16 @@ class VideoInfo:
         print("\n🔍 EXTRAINDO INFO:")  # debug
         print(" ".join(command), "\n")  # debug
 
+        # 🔥 Configuração para ocultar janela do console no Windows
+        creationflags = 0
+        if sys.platform == "win32":
+            creationflags = subprocess.CREATE_NO_WINDOW
+
         result = subprocess.run(
             command,
             capture_output=True,
-            text=True
+            text=True,
+            creationflags=creationflags   # <-- adicionado
         )
 
         if result.returncode != 0:
@@ -68,7 +77,7 @@ class VideoInfo:
         video_formats.sort(key=lambda x: x.get("height", 0))
         audio_formats.sort(key=lambda x: x.get("abr", 0))
 
-        # remove duplicados por resolução+ext para vídeos
+        # remove duplicados por resolução+ext para vídeos, preservando tamanho
         seen = set()
         unique_video_formats = []
         for f in reversed(video_formats):  # maior primeiro
@@ -77,15 +86,17 @@ class VideoInfo:
             key = (h, ext)
             if key not in seen:
                 seen.add(key)
+                filesize = f.get("filesize") or f.get("filesize_approx")
                 unique_video_formats.append({
                     "height": h,
                     "ext": ext,
                     "fps": f.get("fps"),
-                    "format_id": f.get("format_id")
+                    "format_id": f.get("format_id"),
+                    "filesize": filesize,
                 })
         unique_video_formats.reverse()  # menor para maior UI
 
-        # remove duplicados por ext e bitrate para áudios
+        # remove duplicados por ext e bitrate para áudios, preservando tamanho
         seen_audio = set()
         unique_audio_formats = []
         for f in reversed(audio_formats):  # maior bitrate primeiro
@@ -94,10 +105,12 @@ class VideoInfo:
             key = (ext, abr)
             if key not in seen_audio:
                 seen_audio.add(key)
+                filesize = f.get("filesize") or f.get("filesize_approx")
                 unique_audio_formats.append({
                     "ext": ext,
                     "abr": abr,
-                    "format_id": f.get("format_id")
+                    "format_id": f.get("format_id"),
+                    "filesize": filesize,
                 })
         unique_audio_formats.reverse()  # menor para maior UI
 
@@ -105,9 +118,9 @@ class VideoInfo:
             "title": info.get("title", "Sem título"),
             "thumbnail": info.get("thumbnail"),
             "duration": info.get("duration"),
-            "formats": unique_video_formats,     # vídeos filtrados
-            "audio_formats": unique_audio_formats,  # áudios filtrados
-            "raw_formats": formats,              # tudo bruto para debug
+            "formats": unique_video_formats,
+            "audio_formats": unique_audio_formats,
+            "raw_formats": formats,
         }
 
     # ==========================

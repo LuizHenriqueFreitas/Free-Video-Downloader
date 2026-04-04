@@ -11,12 +11,30 @@ Official yt-dlp repository: https://github.com/yt-dlp/yt-dlp
 
 ### **For user**
 
+> **Tip:** Rename your files, maybe this help you to scape bugs
+
+
 The application is fully self-contained and:
 -  Does NOT require Python installed
 -  Does NOT require FFmpeg installed
 -  Does NOT require NodeJs installed
 -  Works on any **Windows 11** machine (no data about linux and Mac)
->***This version can auto-update the yt-dlp tool - you can try it with the button***
+>***This version can auto-update the yt-dlp tool - you can try it with the button "update yt-dlp"***
+
+### ⚠️ Important: Cookies are required for YouTube
+Due to YouTube's restrictions, you **must** provide your browser's cookies to download any video.  
+Here's how to do it safely:
+
+1. Install a browser extension like **"Get cookies.txt LOCALLY"** (open source).  
+2. Log into YouTube in your browser.  
+3. Export the cookies to a `cookies.txt` file (choose *Netscape format*).  
+4. In Video Downloader, click **"Import cookies"** and select that file.
+
+> **Security note:** The `cookies.txt` file contains your logged‑in session.  
+> Never share this file. Consider using a secondary YouTube account.
+> We recomend you delete this file after import to Video Downloader
+
+To remove the cookies at any time, press **"Remove cookies"**.
 
 ### **For devs**
 You'll need Python, FFmpeg and Node install to develop new features, ***or the binary files***, their paths are:
@@ -69,17 +87,8 @@ You can find the most new oficial version of Video Downloader on the Release Pag
 
 ---
 
-## 📌 Project Structure
-
->core/ → Download logic and utilities <br>
->ui/ → Interface files <br>
->assets/ → Icons and UI resources <br>
->tools/ → FFmpeg binaries (development only) <br>
->main.py → Application entry point <br>
-
----
-
 ## 📄 License
 
 This project uses yt-dlp under its respective license.  
+This project uses node under its respective license.
 FFmpeg is distributed according to its official license terms.

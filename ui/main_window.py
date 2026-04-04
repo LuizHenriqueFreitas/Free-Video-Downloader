@@ -16,7 +16,7 @@ from services.updater import check_and_update, get_installed_version
 from ui.components.download_card import DownloadCard
 from ui.download_dialog import DownloadDialog
 
-from core.utils import get_cookies_path, cookies_exists
+from core.utils import get_cookies_path, cookies_exists, secure_cookies_file
 
 
 # ==========================
@@ -134,7 +134,9 @@ class MainWindow(QMainWindow):
     # -------------------------
     def _load_history(self):
         items = self.controller.get_history()
-        for item in items:
+        # 🔄 PERCORRE DO MAIS ANTIGO PARA O MAIS RECENTE
+        # para que o insertWidget(0) no _add_card resulte na ordem correta
+        for item in reversed(items):
             self._add_card(item, start_download=False)
 
     # -------------------------
@@ -157,14 +159,14 @@ class MainWindow(QMainWindow):
             "",
             "Text Files (*.txt)"
         )
-
         if not file:
             return
-
+        
         try:
             os.makedirs("data", exist_ok=True)
             shutil.copy(file, get_cookies_path())
-            self._safe_message("Sucesso", "Cookies importados com sucesso!")
+            secure_cookies_file(get_cookies_path())   # aplica permissões
+            self._safe_message("Sucesso", "Cookies importados com segurança!")
             self._update_cookie_ui()
         except Exception as e:
             self._safe_error("Erro", str(e))
