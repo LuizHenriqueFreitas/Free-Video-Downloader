@@ -1,9 +1,29 @@
 from collections import deque
+from threading import RLock
 from PySide6.QtCore import QThread
 from ui.workers.download_worker import DownloadWorker
 
 
 class DownloadService:
+    """
+    Gerencia uma fila única de downloads com um limite de execuções
+    simultâneas (máx. 3). Os demais ficam aguardando na fila.
+
+    Os handlers de término são conectados como funções (conexão direta),
+    executando na própria thread do worker — assim a thread encerra a si
+    mesma de forma limpa. A segurança da UI é garantida pelo consumidor
+    (MainWindow), cujos callbacks apenas emitem sinais marshalados para a
+    thread principal.
+
+    Como `start_download` (thread principal) e os handlers de término
+    (thread do worker) mexem em `queue`/`running`, todas as mutações desse
+    estado são protegidas por um RLock — evita corridas que deixavam itens
+    presos na fila.
+
+    A API (start_download / queue / running / max_downloads / workers /
+    threads / cancel_download) é mantida estável para os testes.
+    """
+
     def __init__(self):
         self.threads = {}
         self.workers = {}
@@ -11,43 +31,41 @@ class DownloadService:
         self.queue = deque()
 
         self.running = 0
-        self.max_downloads = 2
+        self.max_downloads = 3
+
+        self._lock = RLock()
 
     # ==========================
     # PUBLIC API
     # ==========================
     def start_download(self, item, on_progress, on_finished, on_error, on_cancel):
-        print(f"📥 Adicionado à fila: {item.title}")
-
-        self.queue.append({
-            "item": item,
-            "on_progress": on_progress,
-            "on_finished": on_finished,
-            "on_error": on_error,
-            "on_cancel": on_cancel
-        })
-
-        self._process_queue()
+        with self._lock:
+            self.queue.append({
+                "item": item,
+                "on_progress": on_progress,
+                "on_finished": on_finished,
+                "on_error": on_error,
+                "on_cancel": on_cancel,
+            })
+            self._process_queue()
 
     # ==========================
     # FILA
     # ==========================
     def _process_queue(self):
-        while self.running < self.max_downloads and self.queue:
-            data = self.queue.popleft()
-            item = data["item"]
+        with self._lock:
+            while self.running < self.max_downloads and self.queue:
+                data = self.queue.popleft()
+                item = data["item"]
 
-            print(f"🚀 Iniciando download: {item.title}")
-
-            self.running += 1
-
-            self._start_thread(
-                item,
-                data["on_progress"],
-                data["on_finished"],
-                data["on_error"],
-                data["on_cancel"]
-            )
+                self.running += 1
+                self._start_thread(
+                    item,
+                    data["on_progress"],
+                    data["on_finished"],
+                    data["on_error"],
+                    data["on_cancel"],
+                )
 
     # ==========================
     # THREAD START
@@ -70,66 +88,29 @@ class DownloadService:
         worker.finished.connect(
             lambda emitted_item: self._handle_finished(emitted_item, on_finished)
         )
-
         worker.error.connect(
             lambda emitted_item, msg: self._handle_error(emitted_item, on_error, msg)
         )
-
         worker.cancelled.connect(
             lambda emitted_item: self._handle_cancel(emitted_item, on_cancel)
         )
 
-        # 🔥 CORREÇÃO CRÍTICA (Qt não aceita args)
-        worker.finished.connect(lambda: thread.quit())
+        # Encerrar a thread quando o worker terminar (Qt não aceita args aqui)
+        worker.finished.connect(lambda *_: thread.quit())
         worker.error.connect(lambda *_: thread.quit())
         worker.cancelled.connect(lambda *_: thread.quit())
 
-        # FINALIZAÇÃO DA THREAD
+        # Limpeza final das referências quando a thread realmente terminar
         thread.finished.connect(lambda: self._on_thread_finished(item.id))
-
-        if hasattr(worker, "deleteLater"):
-            thread.finished.connect(worker.deleteLater)
-
-        self._finalize_download(self, )
-
-        if not hasattr(worker, "moveToThread"):
-            # ambiente de teste (FakeWorker)
-            self.workers[item.id] = worker
-
-            try:
-                worker.progress.connect(on_progress)
-                worker.finished.connect(lambda emitted_item: self._handle_finished(emitted_item, on_finished))
-                worker.error.connect(lambda emitted_item, msg: self._handle_error(emitted_item, on_error, msg))
-                worker.cancelled.connect(lambda emitted_item: self._handle_cancel(emitted_item, on_cancel))
-
-                worker.run()
-            except Exception as e:
-                print(f"Erro worker fake: {e}")
-                self._handle_error(item, on_error, str(e))
-
-            return
+        thread.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
 
         thread.start()
-
-
-    def _finalize_download(self, item_id):
-        self._cleanup(item_id)
-
-        if self.running > 0:
-            self.running -= 1
-
-        # 🔥 cleanup garantido (resolve teste)
-        self.threads.pop(item_id, None)
-        self.workers.pop(item_id, None)
-
-        self._process_queue()
 
     # ==========================
     # HANDLERS
     # ==========================
     def _handle_finished(self, item, callback):
-        print(f"✅ FINISHED: {item.title}")
-
         try:
             callback(item)
         except Exception as e:
@@ -138,8 +119,6 @@ class DownloadService:
             self._finalize_download(item.id)
 
     def _handle_error(self, item, callback, msg):
-        print(f"❌ ERROR: {item.title} -> {msg}")
-
         try:
             callback(item, msg)
         except Exception as e:
@@ -148,8 +127,6 @@ class DownloadService:
             self._finalize_download(item.id)
 
     def _handle_cancel(self, item, callback):
-        print(f"⚠️ CANCEL: {item.title}")
-
         try:
             callback(item)
         except Exception as e:
@@ -161,52 +138,74 @@ class DownloadService:
     # FINALIZAÇÃO
     # ==========================
     def _finalize_download(self, item_id):
-        self._cleanup(item_id)
+        # libera o slot e processa o próximo da fila
+        with self._lock:
+            if self.running > 0:
+                self.running -= 1
+            self._process_queue()
 
-        # proteção contra inconsistência
-        if self.running > 0:
-            self.running -= 1
-
-        self._process_queue()
-
-    # ==========================
-    # CLEANUP (SAFE)
-    # ==========================
-    def _cleanup(self, item_id):
-        thread = self.threads.get(item_id)
-
-        if not thread:
-            return
-
-        try:
-            if thread.isRunning():
-                thread.quit()
-        except Exception as e:
-            print("Erro ao finalizar thread:", e)
-
-    # ==========================
-    # FINAL THREAD CALLBACK
-    # ==========================
     def _on_thread_finished(self, item_id):
-        self.threads.pop(item_id, None)
-        self.workers.pop(item_id, None)
+        # remove referências só depois que a thread terminou de fato
+        with self._lock:
+            self.threads.pop(item_id, None)
+            self.workers.pop(item_id, None)
+
+    # ==========================
+    # ENCERRAMENTO (fechar o app)
+    # ==========================
+    def shutdown(self, timeout_ms=4000):
+        """
+        Cancela tudo e aguarda as threads terminarem, para o app fechar sem o
+        aviso 'QThread: Destroyed while thread is still running'.
+        """
+        with self._lock:
+            self.queue.clear()
+            active_ids = list(self.workers.keys())
+            threads = list(self.threads.values())
+
+        for item_id in active_ids:
+            try:
+                self.cancel_download(item_id)   # mata yt-dlp+ffmpeg (taskkill)
+            except Exception:
+                pass
+
+        for thread in threads:
+            try:
+                thread.quit()
+                thread.wait(timeout_ms)
+            except Exception:
+                pass
 
     # ==========================
     # CANCELAMENTO
     # ==========================
     def cancel_download(self, item_id):
-        worker = self.workers.get(item_id)
+        # 1) Download ativo: pega o worker sob lock, mas chama cancel()
+        #    FORA do lock (taskkill pode bloquear por instantes).
+        with self._lock:
+            worker = self.workers.get(item_id)
+
         if worker:
-            print(f"🛑 Cancelando ativo: {item_id}")
             try:
                 worker.cancel()
             except Exception as e:
                 print(f"Erro ao cancelar: {e}")
             return
 
-        # Remove da fila
-        for i, data in enumerate(self.queue):
-            if data["item"].id == item_id:
-                print(f"🗑️ Removido da fila: {item_id}")
-                del self.queue[i]
-                return
+        # 2) Ainda na fila: remove e avisa a UI (não ocupava slot)
+        cancelled_item = None
+        on_cancel = None
+        with self._lock:
+            for i, data in enumerate(self.queue):
+                if data["item"].id == item_id:
+                    del self.queue[i]
+                    cancelled_item = data["item"]
+                    cancelled_item.status = "cancelled"
+                    on_cancel = data["on_cancel"]
+                    break
+
+        if cancelled_item is not None and on_cancel is not None:
+            try:
+                on_cancel(cancelled_item)
+            except Exception as e:
+                print(f"Erro no callback cancel (fila): {e}")

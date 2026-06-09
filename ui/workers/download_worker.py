@@ -11,13 +11,10 @@ from core.utils import (
     get_ytdlp_path,
     get_node_path,
     get_cookies_path,
-    cookies_exists
+    cookies_exists,
+    is_youtube,
+    safe_filename,
 )
-
-
-def safe_filename(name: str) -> str:
-    """Remove caracteres inválidos para filenames."""
-    return re.sub(r'[\\/*?:"<>|]', "", name)
 
 
 def has_audio(file_path: str, ffmpeg_path: str) -> bool:
@@ -54,8 +51,9 @@ class DownloadWorker(QObject):
     # ==========================
     def run(self):
         try:
-            print(f"\n🚀 Iniciando download: {self.item.title}")
             self.item.status = "downloading"
+            # sinaliza que SAIU da fila e realmente começou (card vira "Baixando")
+            self.progress.emit(0)
 
             # Limpa arquivos residuais do yt-dlp
             safe_title = safe_filename(self.item.title)
@@ -65,9 +63,8 @@ class DownloadWorker(QObject):
                 for f in glob.glob(pattern):
                     try:
                         os.remove(f)
-                        print(f"🗑️ Removido: {f}")
-                    except Exception as e:
-                        print(f"⚠️ Erro ao remover {f}: {e}")
+                    except Exception:
+                        pass
 
             # Construir comando e executar
             command = self._build_command()
@@ -75,7 +72,6 @@ class DownloadWorker(QObject):
 
             if not success:
                 if self.item.status == "cancelled":
-                    print("✅ Download cancelado pelo usuário.")
                     return
                 raise Exception("Falha no download (yt-dlp retornou erro)")
 
@@ -83,16 +79,11 @@ class DownloadWorker(QObject):
             if not final_path or not os.path.exists(final_path):
                 raise Exception("Arquivo final não encontrado")
 
-            if self.item.format_type.upper() == "MP4":
-                print("🔊 MP4 gerado com áudio (confiando no comando yt-dlp)")
-
             self.item.file_path = final_path
             self.item.status = "completed"
-            print("✅ Download finalizado:", final_path)
             self.finished.emit(self.item)
 
         except Exception as e:
-            print("❌ ERRO WORKER:", e)
             self.item.status = "error"
             self.error.emit(self.item, str(e))
 
@@ -113,6 +104,7 @@ class DownloadWorker(QObject):
             "--no-playlist",
             "--no-part",
             "--no-check-certificates",
+            "--newline",   # progresso em linhas separadas (parsing confiável)
         ]
 
         if cookies_exists():
@@ -124,6 +116,13 @@ class DownloadWorker(QObject):
         else:
             command += ["--js-runtime", "node"]
 
+        # Sobrescrever arquivo existente (decidido na UI)
+        if getattr(self.item, "overwrite", False):
+            command += ["--force-overwrites"]
+
+        # Corte de trecho (apenas parte do vídeo)
+        section_args = self._build_section_args()
+
         # MP3
         if self.item.format_type.upper() == "MP3":
             command += [
@@ -132,6 +131,7 @@ class DownloadWorker(QObject):
                 "--audio-format", "mp3",
                 "--audio-quality", "192K",
             ]
+            command += section_args
             return command
 
         # MP4
@@ -143,25 +143,57 @@ class DownloadWorker(QObject):
             else:
                 video_format = "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best"
 
+            # extractor-args específicos do YouTube só quando a URL é do YouTube
+            if is_youtube(self.item.url):
+                command += ["--extractor-args", "youtube:player_client=web_safari,android_vr"]
+
             command += [
-                "--extractor-args", "youtube:player_client=web_safari,android_vr",
                 "-f", video_format,
                 "--merge-output-format", "mp4",
-                "--postprocessor-args", "ffmpeg:-c:v copy -c:a aac",
                 "--no-mtime",
                 "--no-continue",
             ]
+
+            if section_args:
+                # ao cortar, deixamos o yt-dlp/ffmpeg reencodar nos limites
+                # (force-keyframes-at-cuts) para um corte preciso.
+                command += section_args
+            else:
+                # sem corte: cópia direta de stream (rápido)
+                command += ["--postprocessor-args", "ffmpeg:-c:v copy -c:a aac"]
+
             return command
 
         return command
 
     # ==========================
+    # SECTION (CORTE DE TRECHO)
+    # ==========================
+    def _build_section_args(self):
+        start = getattr(self.item, "clip_start", None)
+        end = getattr(self.item, "clip_end", None)
+
+        if start is None and end is None:
+            return []
+
+        start_s = max(0.0, float(start)) if start is not None else 0.0
+        end_str = f"{float(end):.3f}" if end is not None else "inf"
+
+        section = f"*{start_s:.3f}-{end_str}"
+        return [
+            "--download-sections", section,
+            "--force-keyframes-at-cuts",
+            # Força decodificação por SOFTWARE no ffmpeg. Sem isso, o ffmpeg tenta
+            # aceleração por hardware (dxva2) na decodificação do h264 e, em
+            # algumas GPUs/drivers, falha com "Could not create the surfaces" e
+            # o corte trava indefinidamente.
+            "--downloader-args", "ffmpeg_i:-hwaccel none",
+        ]
+
+    # ==========================
     # PROCESS
     # ==========================
     def _run_process(self, command):
-        print("\n📦 COMANDO EXECUTADO:")
-        print(" ".join(command), "\n")
-
         # 🔥 Configuração para ocultar janela do console no Windows
         creationflags = 0
         if sys.platform == "win32":
@@ -173,25 +205,19 @@ class DownloadWorker(QObject):
             stderr=subprocess.STDOUT,
             text=True,
             bufsize=1,
-            creationflags=creationflags,   # <-- adicionado
+            creationflags=creationflags,
         )
 
-        last_percent = 0
+        last_emitted = -1
         merge_started = False
-        final_emitted = False
 
+        # Lê o stdout linha a linha (sem print por linha — custo desnecessário).
         for line in self.process.stdout:
+            if self._is_cancelled:
+                break
             if not line:
                 continue
             line = line.strip()
-            print(line)
-
-            if self._is_cancelled:
-                print("⚠️ Cancelando download...")
-                self.process.kill()
-                self.item.status = "cancelled"
-                self.cancelled.emit(self.item)
-                return False
 
             if "Merging formats" in line:
                 merge_started = True
@@ -199,24 +225,34 @@ class DownloadWorker(QObject):
 
             if "[download]" in line and "%" in line:
                 try:
-                    percent_str = line.split("%")[0].split()[-1]
-                    percent = float(percent_str)
-
+                    percent = float(line.split("%")[0].split()[-1])
                     if merge_started:
                         continue
-                    # Só emite se for maior que o último e < 100
-                    if percent > last_percent and percent < 100:
-                        last_percent = percent
-                        self.progress.emit(int(percent))
-                except:
+                    # Progresso MONOTÔNICO, travado em 99 até o fim. Em vídeos com
+                    # vídeo+áudio separados, o 2º stream recomeça em 0% — como só
+                    # emitimos valores maiores, a barra fica parada em 99 durante o
+                    # 2º stream e a junção (merge), dando bom feedback, e só vai a
+                    # 100 quando tudo termina.
+                    p = min(99, int(percent))
+                    if p > last_emitted:
+                        last_emitted = p
+                        self.progress.emit(p)
+                except Exception:
                     pass
 
-        self.process.wait()
-        # Emite 100% apenas uma vez no final
-        if not final_emitted:
-            self.progress.emit(100)
-            final_emitted = True
+        # Cancelado: mata a árvore de processos e encerra rápido
+        if self._is_cancelled:
+            self._kill_process_tree()
+            try:
+                self.process.wait(timeout=5)
+            except Exception:
+                pass
+            self.item.status = "cancelled"
+            self.cancelled.emit(self.item)
+            return False
 
+        self.process.wait()
+        self.progress.emit(100)   # 100% uma única vez no fim
         return self.process.returncode == 0
 
     # ==========================
@@ -224,11 +260,31 @@ class DownloadWorker(QObject):
     # ==========================
     def cancel(self):
         self._is_cancelled = True
-        if self.process:
+        # mata yt-dlp E seus filhos (ffmpeg), liberando o pipe imediatamente
+        self._kill_process_tree()
+
+    def _kill_process_tree(self):
+        p = self.process
+        if not p:
+            return
+        try:
+            if sys.platform == "win32":
+                pid = getattr(p, "pid", None)
+                if pid is not None:
+                    subprocess.run(
+                        ["taskkill", "/F", "/T", "/PID", str(pid)],
+                        capture_output=True,
+                        creationflags=subprocess.CREATE_NO_WINDOW,
+                    )
+                else:
+                    p.kill()
+            else:
+                p.kill()
+        except Exception:
             try:
-                self.process.kill()
-            except Exception as e:
-                print("Erro ao cancelar:", e)
+                p.kill()
+            except Exception:
+                pass
 
     # ==========================
     # FILE FINDER

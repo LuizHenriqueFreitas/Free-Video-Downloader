@@ -4,7 +4,7 @@ import subprocess
 import json
 import sys
 
-from core.utils import get_ytdlp_path, get_cookies_path, cookies_exists, get_node_path
+from core.utils import get_ytdlp_path, get_cookies_path, cookies_exists, get_node_path, is_youtube
 
 
 class VideoInfo:
@@ -16,35 +16,43 @@ class VideoInfo:
         node_path = get_node_path()
 
         # yt-dlp command line
-        command = [
-            ytdlp_path,
-            "--user-agent", "Mozilla/5.0",
+        command = [ytdlp_path]
+
+        # user-agent + extractor-args são específicos do YouTube. NÃO usar em
+        # outras plataformas: o "Mozilla/5.0" causa HTTP 403 no TikTok.
+        if is_youtube(url):
+            command += [
+                "--user-agent", "Mozilla/5.0",
+                "--extractor-args", "youtube:player_client=web_safari,android_vr",
+            ]
+
+        command += [
             "--js-runtime", f"node:{node_path}",
-            "--extractor-args", "youtube:player_client=web_safari,android_vr",
             "--no-playlist",
             "--skip-download",
             "-j",
-            url
+            url,
         ]
 
         # add cookies to yt-dlp command line
         if cookies_exists():
             command += ["--cookies", get_cookies_path()]
 
-        print("\n🔍 EXTRAINDO INFO:")  # debug
-        print(" ".join(command), "\n")  # debug
-
         # 🔥 Configuração para ocultar janela do console no Windows
         creationflags = 0
         if sys.platform == "win32":
             creationflags = subprocess.CREATE_NO_WINDOW
 
-        result = subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-            creationflags=creationflags   # <-- adicionado
-        )
+        try:
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                creationflags=creationflags,
+                timeout=90,   # defensivo: não deixa a thread presa indefinidamente
+            )
+        except subprocess.TimeoutExpired:
+            raise Exception("Tempo esgotado ao obter informações do vídeo")
 
         if result.returncode != 0:
             raise Exception(self._parse_error(result.stderr))
@@ -52,7 +60,6 @@ class VideoInfo:
         try:
             info = json.loads(result.stdout)
         except Exception:
-            print("STDOUT:", result.stdout)
             raise Exception("Falha ao interpretar resposta do yt-dlp")
 
         return self._format_response(info)
@@ -151,3 +158,116 @@ class VideoInfo:
             return "É necessário estar logado"
 
         return stderr
+
+    # ==========================
+    # PLAYLIST
+    # ==========================
+    def extract_playlist(self, url: str):
+        """
+        Enumera os vídeos de uma playlist (rápido, sem baixar nada).
+        Retorna {"title": str, "entries": [{"url", "title", "id", "duration"}, ...]}
+        ou None se a URL não for uma playlist.
+        """
+        if not url:
+            raise ValueError("URL vazia")
+
+        ytdlp_path = get_ytdlp_path()
+
+        command = [
+            ytdlp_path,
+            "--flat-playlist",
+            "--no-warnings",
+            "-J",
+            url,
+        ]
+        if cookies_exists():
+            command += ["--cookies", get_cookies_path()]
+
+        creationflags = 0
+        if sys.platform == "win32":
+            creationflags = subprocess.CREATE_NO_WINDOW
+
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            creationflags=creationflags,
+        )
+
+        if result.returncode != 0:
+            raise Exception(self._parse_error(result.stderr))
+
+        try:
+            info = json.loads(result.stdout)
+        except Exception:
+            raise Exception("Falha ao interpretar a playlist")
+
+        entries = info.get("entries")
+        if info.get("_type") != "playlist" or not entries:
+            return None
+
+        parsed = []
+        for e in entries:
+            if not e:
+                continue
+            entry_url = e.get("url") or e.get("webpage_url") or e.get("id")
+            if entry_url and not str(entry_url).startswith("http"):
+                # fallback: monta URL do YouTube a partir do id
+                if is_youtube(url):
+                    entry_url = f"https://www.youtube.com/watch?v={entry_url}"
+            parsed.append({
+                "url": entry_url,
+                "title": e.get("title") or "(sem título)",
+                "id": e.get("id"),
+                "duration": e.get("duration"),
+            })
+
+        return {
+            "title": info.get("title", "Playlist"),
+            "entries": parsed,
+        }
+
+
+# ==========================
+# PREVIEW (URL TOCÁVEL)
+# ==========================
+def pick_preview_url(info: dict):
+    """
+    Escolhe, entre os formatos brutos, uma URL progressiva (vídeo+áudio juntos)
+    para o QMediaPlayer. Prioriza a MENOR resolução progressiva em mp4 — o
+    preview é só para o usuário visualizar onde cortar, então estabilidade
+    importa mais que qualidade (a qualidade do download é a que o usuário
+    selecionou, independente do preview). Retorna None se não houver formato
+    progressivo.
+    """
+    if not info:
+        return None
+
+    formats = info.get("raw_formats") or info.get("formats") or []
+    progressive = []
+    for f in formats:
+        if not isinstance(f, dict):
+            continue
+        if f.get("vcodec") in (None, "none"):
+            continue
+        if f.get("acodec") in (None, "none"):
+            continue
+        if not f.get("url"):
+            continue
+        proto = (f.get("protocol") or "").lower()
+        is_hls = "m3u8" in proto
+        progressive.append((f, is_hls))
+
+    if not progressive:
+        return None
+
+    def score(item):
+        f, is_hls = item
+        height = f.get("height") or 9999
+        not_hls = 0 if is_hls else 1            # prefere não-HLS (mais estável)
+        is_mp4 = 1 if (f.get("ext") == "mp4") else 0
+        # -height => a MENOR resolução vence (mais leve/estável p/ tocar)
+        return (not_hls, is_mp4, -height)
+
+    best = max(progressive, key=score)
+    return best[0].get("url")

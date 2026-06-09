@@ -2,7 +2,119 @@
 
 import sys
 import os
+import re
 import stat
+
+
+# ==========================
+# PLATAFORMA / URL
+# ==========================
+
+# domínios -> nome amigável da plataforma
+_PLATFORM_DOMAINS = {
+    "youtube": ("youtube.com", "youtu.be", "youtube-nocookie.com"),
+    "tiktok": ("tiktok.com",),
+    "instagram": ("instagram.com", "instagr.am"),
+    "facebook": ("facebook.com", "fb.watch", "fb.com"),
+    "twitter": ("twitter.com", "x.com"),
+    "vimeo": ("vimeo.com",),
+    "twitch": ("twitch.tv",),
+}
+
+
+def detect_platform(url: str) -> str:
+    """Identifica a plataforma a partir da URL. Retorna 'generic' se desconhecida."""
+    if not url:
+        return "generic"
+    u = url.lower()
+    for platform, domains in _PLATFORM_DOMAINS.items():
+        if any(d in u for d in domains):
+            return platform
+    return "generic"
+
+
+def looks_like_url(text: str) -> bool:
+    """Heurística simples: parece um link http(s)?"""
+    if not text:
+        return False
+    return bool(re.search(r"https?://[^\s]+", text.strip()))
+
+
+def is_youtube(url: str) -> bool:
+    return detect_platform(url) == "youtube"
+
+
+def is_youtube_playlist(url: str) -> bool:
+    """True se a URL é uma playlist do YouTube (tem parâmetro list= ou /playlist)."""
+    if not is_youtube(url):
+        return False
+    u = url.lower()
+    return ("list=" in u) or ("/playlist" in u)
+
+
+# ==========================
+# VALIDAÇÃO DE NOME DE ARQUIVO
+# ==========================
+
+# Caracteres proibidos em nomes de arquivo no Windows (e boa prática geral)
+INVALID_FILENAME_CHARS = '\\/:*?"<>|'
+
+
+def invalid_filename_chars(name: str):
+    """Retorna a lista (ordenada, sem repetição) de caracteres proibidos presentes no nome."""
+    if not name:
+        return []
+    found = []
+    for c in name:
+        if c in INVALID_FILENAME_CHARS and c not in found:
+            found.append(c)
+    return found
+
+
+def is_valid_filename(name: str) -> bool:
+    """True se o nome não tem caracteres proibidos e não é vazio."""
+    return bool(name and name.strip()) and not invalid_filename_chars(name)
+
+
+# ==========================
+# NOMES DE ARQUIVO / CONFLITOS
+# ==========================
+
+def safe_filename(name: str) -> str:
+    """Remove caracteres inválidos para filenames."""
+    return re.sub(r'[\\/*?:"<>|]', "", name or "").strip() or "video"
+
+
+def expected_extension(format_type: str) -> str:
+    """Extensão final esperada para o formato escolhido."""
+    return "mp3" if (format_type or "").upper() == "MP3" else "mp4"
+
+
+def expected_output_path(folder: str, title: str, format_type: str) -> str:
+    """Caminho final previsto para o arquivo (pasta/título.ext)."""
+    ext = expected_extension(format_type)
+    return os.path.join(folder, f"{safe_filename(title)}.{ext}")
+
+
+def file_conflict(folder: str, title: str, format_type: str) -> bool:
+    """True se já existe um arquivo com mesmo nome e tipo na pasta."""
+    return os.path.exists(expected_output_path(folder, title, format_type))
+
+
+def resolve_unique_title(folder: str, title: str, format_type: str) -> str:
+    """
+    Retorna um título que não colida com arquivos existentes.
+    Ex.: 'video' -> 'video (1)' -> 'video (2)' ...
+    """
+    base = safe_filename(title)
+    if not file_conflict(folder, base, format_type):
+        return base
+    i = 1
+    while True:
+        candidate = f"{base} ({i})"
+        if not file_conflict(folder, candidate, format_type):
+            return candidate
+        i += 1
 
 # ==========================
 # DIRETÓRIO DE DADOS DO USUÁRIO (persistente)

@@ -3,7 +3,7 @@
 import uuid, time
 
 class DownloadItem:
-    def __init__(self, url, title, original_title=None, format_type="MP4", quality="best", quality_id=None, thumbnail=None, status="pending", output_path=None, file_path=None, filesize=None):
+    def __init__(self, url, title, original_title=None, format_type="MP4", quality="best", quality_id=None, thumbnail=None, status="pending", output_path=None, file_path=None, filesize=None, clip_start=None, clip_end=None, overwrite=False):
         self.id = str(uuid.uuid4())
         self.url = url
         self.title = title          # nome do arquivo (pode ser personalizado)
@@ -17,6 +17,11 @@ class DownloadItem:
         self.file_path = file_path
         self.created_at = time.time()
         self.filesize = filesize
+        # corte de trecho (em segundos); None = vídeo completo
+        self.clip_start = clip_start
+        self.clip_end = clip_end
+        # se True, sobrescreve arquivo existente (--force-overwrites)
+        self.overwrite = overwrite
 
     def to_dict(self):
         return {
@@ -33,6 +38,8 @@ class DownloadItem:
             "file_path": self.file_path,
             "created_at": self.created_at,
             "filesize": self.filesize,
+            "clip_start": self.clip_start,
+            "clip_end": self.clip_end,
         }
 
     @classmethod
@@ -49,6 +56,8 @@ class DownloadItem:
             output_path=data.get("output_path"),
             file_path=data.get("file_path"),
             filesize=data.get("filesize"),
+            clip_start=data.get("clip_start"),
+            clip_end=data.get("clip_end"),
         )
         item.id = data["id"]
         item.created_at = data.get("created_at", time.time())

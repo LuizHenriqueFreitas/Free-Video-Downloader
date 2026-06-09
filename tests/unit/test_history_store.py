@@ -51,15 +51,16 @@ def test_should_save_and_load_items(store):
     assert loaded[0].title.startswith("title_")
 
 
-def test_should_limit_to_20_items(store):
-    items = [create_item(i) for i in range(30)]
+def test_should_limit_to_max_stored_items(store):
+    # o histórico mantém em disco o suficiente para a maior opção de exibição (50)
+    items = [create_item(i) for i in range(60)]
 
     store.save(items)
 
     with open(store.file_path, "r", encoding="utf-8") as f:
         data = json.load(f)
 
-    assert len(data) == 20
+    assert len(data) == 50
 
 
 def test_should_order_by_created_at_desc(store):

@@ -25,5 +25,12 @@ class DownloadController:
         if found:
             self._save()
 
+    def remove_item(self, item):
+        item_id = getattr(item, "id", item)
+        before = len(self.items)
+        self.items = [x for x in self.items if x.id != item_id]
+        if len(self.items) != before:
+            self._save()
+
     def _save(self):
         self.store.save(self.items)
