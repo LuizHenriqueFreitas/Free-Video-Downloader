@@ -270,13 +270,10 @@ class DownloadCard(QWidget):
             if status == "downloading":
                 self.progress_container.show()
                 self.status_label.hide()
-                if self._is_clip():
-                    # corte re-encoda com ffmpeg e não reporta %: barra indeterminada
-                    self.progress_bar.setRange(0, 0)
-                    self.progress_bar.setFormat("Processando trecho...")
-                else:
-                    self.progress_bar.setRange(0, 100)
-                    self.progress_bar.setFormat("%p%")
+                # Clips agora mostram progresso real durante o download;
+                # a barra só vira indeterminada aos 99% (fase de corte ffmpeg)
+                self.progress_bar.setRange(0, 100)
+                self.progress_bar.setFormat("%p%")
             else:  # queued: mostra "Na fila..." sem barra de progresso
                 self.progress_container.hide()
                 self.status_label.show()
@@ -308,11 +305,16 @@ class DownloadCard(QWidget):
                 or getattr(self.item, "clip_end", None) is not None)
 
     def update_progress(self, value):
-        if self._is_clip():
-            return  # barra indeterminada para trechos; ignora %
         value = max(0, min(100, value))
-        self.progress_bar.setValue(value)
-        self.progress_bar.setFormat(f"{value}%")
+        if self._is_clip() and value >= 99:
+            # fase de corte ffmpeg: barra indeterminada com texto
+            self.progress_bar.setRange(0, 0)
+            self.progress_bar.setFormat("Cortando trecho...")
+        else:
+            if self.progress_bar.maximum() == 0:
+                self.progress_bar.setRange(0, 100)
+            self.progress_bar.setValue(value)
+            self.progress_bar.setFormat(f"{value}%")
 
     def update_status(self, status):
         self.item.status = status

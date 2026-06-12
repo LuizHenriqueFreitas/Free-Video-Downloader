@@ -192,3 +192,13 @@ def save_cookies(content: bytes):
     with open(path, "wb") as f:
         f.write(content)
     secure_cookies_file(path)
+def get_ffmpeg_exe():
+    """Retorna o caminho completo do executável ffmpeg."""
+    import sys as _sys
+    bin_dir = get_ffmpeg_path()
+    exe = "ffmpeg.exe" if _sys.platform == "win32" else "ffmpeg"
+    full = os.path.join(bin_dir, exe)
+    if os.path.exists(full):
+        return full
+    # fallback para ffmpeg do PATH
+    return exe

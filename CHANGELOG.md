@@ -4,6 +4,45 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [v 2.5.0] - 2026-
+
+### Added
+- Outhers social media download suport (instagram, tiktok, X, etc)
+- Cut editor before download
+- Download Youtube Playlists are suported now
+- UI enhancements for life quality
+- Semi complete Auto-Update implemented
+
+### Improved
+- Now it's possible Download Videos from:
+    1. Youtube
+    2. Instragram
+    3. Tiktok
+    4. X <br>
+    5. *and probably more*<br>
+    
+    >**Only paste the media link**
+
+- More Buttons and options for simple user
+    - Remove vídeos from historic
+    - Select between historic of 10, 20 and 50 videos
+    - You can copy the original vídeo link from a button on video card
+
+- Now is possible to download playlists
+    - all videos from playlist will be with the original titles
+    - automatic quality is always 1080p ou better possible
+    > if you want to get a 4k or 8k video, need to do individual
+    - you have a window specific for playlist manage
+
+- You can edit the video before donwload
+    - With the new tool: Advanced Mode is possibe to cut just a session of the original media to download a little file
+    - This is useful whe you have a large content like a live stream, and need just a small part
+    - Good too for people how don't have too much space on disk to download more content
+    
+    **Atention**
+    > Your clip size is not visible before donwload the vídeo
+    ***
+
 ## [v 2.0.0] - 2026-04-03
 
 ### Added

@@ -40,6 +40,7 @@ class DownloadItem:
             "filesize": self.filesize,
             "clip_start": self.clip_start,
             "clip_end": self.clip_end,
+            "overwrite": self.overwrite,
         }
 
     @classmethod
@@ -58,6 +59,7 @@ class DownloadItem:
             filesize=data.get("filesize"),
             clip_start=data.get("clip_start"),
             clip_end=data.get("clip_end"),
+            overwrite=data.get("overwrite", False),
         )
         item.id = data["id"]
         item.created_at = data.get("created_at", time.time())

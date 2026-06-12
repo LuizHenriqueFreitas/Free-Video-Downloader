@@ -59,6 +59,8 @@ class MainWindow(QMainWindow):
         self.settings = SettingsStore()
 
         self.cards = {}
+        # itens aguardando cancelamento para depois serem removidos da UI
+        self._pending_removal = set()
 
         # conecta sinais de download (entregues na thread de UI via QueuedConnection)
         self.sig_progress.connect(self._on_progress_ui)
@@ -326,14 +328,23 @@ class MainWindow(QMainWindow):
             if reply != QMessageBox.Yes:
                 return
 
-        # se estiver baixando ou na fila, cancela primeiro
-        self.download_service.cancel_download(item.id)
+        # Verifica se está ativo (baixando ou na fila)
+        is_active = (
+            item.id in self.download_service.workers or
+            any(d["item"].id == item.id for d in self.download_service.queue)
+        )
 
-        # remove do histórico e da UI
-        self.controller.remove_item(item)
-        self.cards.pop(item.id, None)
-        self.container_layout.removeWidget(card)
-        card.deleteLater()
+        if is_active:
+            # Marca para remoção após o cancelamento ser confirmado pelo sinal
+            self._pending_removal.add(item.id)
+            self.download_service.cancel_download(item.id)
+            # O card será removido em _on_download_cancelled quando o sinal chegar
+        else:
+            # Download já terminou (completed/error/cancelled): remove imediatamente
+            self.controller.remove_item(item)
+            self.cards.pop(item.id, None)
+            self.container_layout.removeWidget(card)
+            card.deleteLater()
 
     # -------------------------
     # START DOWNLOAD (FILA ÚNICA, MÁX 3)
@@ -378,10 +389,20 @@ class MainWindow(QMainWindow):
         self._safe_error("Erro", msg)
 
     def _on_download_cancelled(self, item):
-        card = self.cards.get(item.id)
-        if card:
-            card.update_status("cancelled")
-        self.controller.update_item(item)
+        if item.id in self._pending_removal:
+            # Remoção solicitada pelo usuário: apaga card e histórico agora
+            self._pending_removal.discard(item.id)
+            card = self.cards.pop(item.id, None)
+            self.controller.remove_item(item)
+            if card:
+                self.container_layout.removeWidget(card)
+                card.deleteLater()
+        else:
+            # Cancelamento normal (botão Cancelar do card)
+            card = self.cards.get(item.id)
+            if card:
+                card.update_status("cancelled")
+            self.controller.update_item(item)
 
     # -------------------------
     # SAFE UI

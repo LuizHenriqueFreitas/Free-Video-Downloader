@@ -1,5 +1,3 @@
-# storage/settings_store.py
-
 import json
 import os
 
@@ -10,6 +8,7 @@ DEFAULTS = {
     "history_count": 20,            # 10, 20 ou 50
     "advanced_mode": False,         # modo simples (False) vs. avançado/corte (True)
     "skip_remove_confirm": False,   # pular o aviso ao remover do histórico
+    "skip_playlist_warning": False, # pular o aviso ao baixar playlist
 }
 
 ALLOWED_HISTORY_COUNTS = (10, 20, 50)
@@ -44,6 +43,19 @@ class SettingsStore:
             print("Erro ao salvar settings:", e)
 
     # ==========================
+    # MÉTODOS AUXILIARES PARA BOOLEANOS
+    # ==========================
+    def _get_bool(self, key: str, default: bool) -> bool:
+        """Retorna valor booleano da configuração"""
+        value = self._data.get(key, default)
+        return bool(value)
+
+    def _set_bool(self, key: str, value: bool):
+        """Salva valor booleano na configuração"""
+        self._data[key] = bool(value)
+        self._save()
+
+    # ==========================
     # HISTÓRICO
     # ==========================
     def get_history_count(self) -> int:
@@ -66,6 +78,15 @@ class SettingsStore:
     def set_advanced_mode(self, value: bool):
         self._data["advanced_mode"] = bool(value)
         self._save()
+
+    # ==========================
+    # PLAYLIST WARNING
+    # ==========================
+    def get_skip_playlist_warning(self) -> bool:
+        return self._get_bool("skip_playlist_warning", DEFAULTS["skip_playlist_warning"])
+
+    def set_skip_playlist_warning(self, value: bool):
+        self._set_bool("skip_playlist_warning", value)
 
     # ==========================
     # CONFIRMAÇÃO DE REMOÇÃO

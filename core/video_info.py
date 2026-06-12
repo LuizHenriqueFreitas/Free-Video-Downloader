@@ -215,11 +215,20 @@ class VideoInfo:
                 # fallback: monta URL do YouTube a partir do id
                 if is_youtube(url):
                     entry_url = f"https://www.youtube.com/watch?v={entry_url}"
+            # ADICIONAR THUMBNAIL
+            # Para YouTube, a thumb pode ser montada a partir do ID
+            thumb = e.get("thumbnail")
+            if not thumb and is_youtube(url) and e.get("id"):
+                # Monta URL da thumbnail do YouTube a partir do ID do vídeo
+                vid_id = e.get("id")
+                thumb = f"https://img.youtube.com/vi/{vid_id}/mqdefault.jpg"
+            
             parsed.append({
                 "url": entry_url,
                 "title": e.get("title") or "(sem título)",
                 "id": e.get("id"),
                 "duration": e.get("duration"),
+                "thumbnail": thumb,  # <-- ADICIONADO
             })
 
         return {

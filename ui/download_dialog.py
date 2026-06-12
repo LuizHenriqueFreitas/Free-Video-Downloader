@@ -15,6 +15,7 @@ from PySide6.QtCore import QTimer, QThread, QObject, Signal, Slot
 from core.video_info import VideoInfo, pick_preview_url
 from core.utils import (
     resource_path, cookies_exists, looks_like_url, is_youtube,
+    is_youtube_playlist,
     file_conflict, resolve_unique_title, expected_output_path,
     safe_filename, invalid_filename_chars, is_valid_filename,
 )
@@ -35,6 +36,29 @@ _LIVE_THREADS = set()
 def _keep_thread(thread):
     _LIVE_THREADS.add(thread)
     thread.finished.connect(lambda: _LIVE_THREADS.discard(thread))
+
+
+# ==========================
+# WORKER: carrega playlist em background
+# ==========================
+class PlaylistLoadWorker(QObject):
+    # Inclui request_id nos sinais para que o slot saiba a qual pedido responder
+    # sem precisar de lambdas com captura (que causam problemas de entrega
+    # entre threads no PySide6 com QueuedConnection).
+    finished = Signal(object, str)   # (playlist_dict, request_id)
+    error = Signal(str, str)         # (msg, request_id)
+
+    def __init__(self, url, request_id):
+        super().__init__()
+        self.url = url
+        self.request_id = request_id
+
+    def run(self):
+        try:
+            playlist = VideoInfo().extract_playlist(self.url)
+            self.finished.emit(playlist, self.request_id)
+        except Exception as e:
+            self.error.emit(str(e), self.request_id)
 
 
 # ==========================
@@ -245,6 +269,45 @@ class DownloadDialog(QDialog):
             self.ok_button.setEnabled(True)
 
     # ==========================
+    # DETECÇÃO DE PLAYLIST EM URL DE VÍDEO
+    # ==========================
+    def _extract_playlist_id_from_video_url(self, url):
+        """Extrai ID da playlist de uma URL de vídeo do YouTube (&list=...)"""
+        import re
+        match = re.search(r'[&?]list=([a-zA-Z0-9_-]+)', url)
+        return match.group(1) if match else None
+
+    def _build_playlist_url_from_id(self, playlist_id):
+        """Converte ID da playlist em URL completa"""
+        return f"https://www.youtube.com/playlist?list={playlist_id}"
+
+    def _ask_single_or_playlist(self, video_url, playlist_url):
+        """Pergunta ao usuário se quer baixar só o vídeo ou a playlist inteira"""
+        msg = QMessageBox(self)
+        msg.setWindowTitle("Playlist detectada")
+        msg.setIcon(QMessageBox.Question)
+        msg.setText(
+            "🔗 **Playlist detectada!**\n\n"
+            "A URL informada pertence a uma playlist do YouTube.\n\n"
+            "O que você deseja baixar?"
+        )
+        
+        btn_video = msg.addButton("📹 Apenas este vídeo", QMessageBox.AcceptRole)
+        btn_playlist = msg.addButton("📋 Toda a playlist", QMessageBox.AcceptRole)
+        btn_cancel = msg.addButton("Cancelar", QMessageBox.RejectRole)
+        msg.setDefaultButton(btn_video)
+        
+        msg.exec()
+        
+        clicked = msg.clickedButton()
+        if clicked == btn_video:
+            return "single"
+        elif clicked == btn_playlist:
+            return "playlist"
+        else:
+            return "cancel"
+
+    # ==========================
     # LOAD (THREAD SAFE)
     # ==========================
     def _load_video_info(self):
@@ -256,28 +319,37 @@ class DownloadDialog(QDialog):
             self.status_label.setText("⚠ Cookies não configurados")
             return
 
-        # Playlists ainda não são suportadas (será desenvolvido no futuro).
-        # URL de playlist pura (list= sem v=) -> avisa. watch?v=X&list=Y baixa
-        # apenas o vídeo X (yt-dlp usa --no-playlist).
-        low = url.lower()
-        if is_youtube(url) and ("list=" in low) and ("v=" not in low):
-            self._reset_video_state()
-            self.status_label.setText(
-                "Playlists ainda não são suportadas. Cole o link de um vídeo."
-            )
-            return
+        # ---- NOVO: Detectar playlist em URL de vídeo (&list=) ----
+        playlist_id = self._extract_playlist_id_from_video_url(url)
+        if playlist_id and not is_youtube_playlist(url):  # é URL de vídeo DENTRO de playlist
+            playlist_url = self._build_playlist_url_from_id(playlist_id)
+            choice = self._ask_single_or_playlist(url, playlist_url)
+            
+            if choice == "cancel":
+                self.status_label.setText("Cancelado pelo usuário")
+                return
+            elif choice == "playlist":
+                # Redireciona para carregar a playlist inteira
+                self.url_input.setText(playlist_url)  # atualiza UI opcionalmente
+                self._load_video_info()  # recarrega como playlist
+                return
+            # choice == "single": continua o fluxo normal de vídeo único
 
-        # Reset do estado de vídeo único
+        # Abandona qualquer requisição anterior
+        self._abandon_thread()
         self._reset_video_state()
 
-        # Pede para a thread anterior encerrar, SEM bloquear a UI.
-        # O resultado tardio é descartado pelo request_id.
-        self._abandon_thread()
-
-        self._loading_url = url
         request_id = str(uuid4())
         self._current_request_id = request_id
+        self._loading_url = url
 
+        # ---- Playlist do YouTube ----
+        if is_youtube_playlist(url):
+            self.status_label.setText("Carregando playlist...")
+            self._start_playlist_worker(url, request_id)
+            return
+
+        # ---- Vídeo único ----
         temp_thumb = os.path.join("temp", f"{request_id}.jpg")
         self._current_thumb_path = temp_thumb
 
@@ -288,11 +360,27 @@ class DownloadDialog(QDialog):
         self._worker.moveToThread(self._thread)
 
         self._thread.started.connect(self._worker.run)
-        # bound slots -> entregues na thread principal (QueuedConnection)
         self._worker.finished.connect(self._on_video_loaded)
         self._worker.error.connect(self._on_video_error)
         self._worker.finished.connect(self._thread.quit)
         self._worker.error.connect(self._thread.quit)
+        self._thread.finished.connect(self._thread.deleteLater)
+
+        _keep_thread(self._thread)
+        self._thread.start()
+
+    def _start_playlist_worker(self, url, request_id):
+        self._thread = QThread()
+        self._worker = PlaylistLoadWorker(url, request_id)
+        self._worker.moveToThread(self._thread)
+
+        self._thread.started.connect(self._worker.run)
+        # Conexão direta ao slot (sem lambda): garante QueuedConnection correto
+        # entre a thread do worker e a thread principal (UI).
+        self._worker.finished.connect(self._on_playlist_loaded)
+        self._worker.error.connect(self._on_playlist_error)
+        self._worker.finished.connect(lambda *_: self._thread.quit())
+        self._worker.error.connect(lambda *_: self._thread.quit())
         self._thread.finished.connect(self._thread.deleteLater)
 
         _keep_thread(self._thread)
@@ -346,6 +434,34 @@ class DownloadDialog(QDialog):
         if request_id != self._current_request_id:
             return
         self.status_label.setText(f"Erro: {msg}")
+
+    # ==========================
+    # PLAYLIST HANDLERS
+    # ==========================
+    @Slot(object, str)
+    def _on_playlist_loaded(self, playlist, request_id):
+        if request_id != self._current_request_id:
+            return
+
+        if not playlist or not playlist.get("entries"):
+            self.status_label.setText("Nenhum vídeo encontrado na playlist.")
+            return
+
+        self.status_label.setText(
+            f"✔ Playlist carregada: {len(playlist['entries'])} vídeos"
+        )
+
+        from ui.playlist_dialog import PlaylistDialog
+        dlg = PlaylistDialog(playlist, self)
+        if dlg.exec():
+            self._results = dlg.get_result()
+            self.accept()
+
+    @Slot(str, str)
+    def _on_playlist_error(self, msg, request_id):
+        if request_id != self._current_request_id:
+            return
+        self.status_label.setText(f"Erro ao carregar playlist: {msg}")
 
     # ==========================
     # TRIMMER (CORTE)
