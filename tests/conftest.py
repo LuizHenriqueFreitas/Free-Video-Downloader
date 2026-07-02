@@ -5,6 +5,20 @@ from datetime import datetime
 from models.download_item import DownloadItem
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _qapplication():
+    """
+    Garante uma QApplication única para a sessão de testes.
+    Necessária para testes que usam QThread/QTimer/sinais do Qt
+    (caso o pytest-qt não esteja instalado).
+    """
+    import os
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+    app = QApplication.instance() or QApplication([])
+    yield app
+
+
 @pytest.fixture
 def sample_item():
     item = DownloadItem(

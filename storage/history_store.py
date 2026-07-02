@@ -20,10 +20,13 @@ class HistoryStore:
         except:
             return []
 
+    # mantém em disco o suficiente para a maior opção de exibição (50)
+    MAX_STORED = 50
+
     def save(self, items):
         # ordena e limita
         items = sorted(items, key=lambda x: x.created_at, reverse=True)
-        items = items[:20]
+        items = items[:self.MAX_STORED]
 
         with open(self.file_path, "w", encoding="utf-8") as f:
             json.dump([x.to_dict() for x in items], f, indent=2)
