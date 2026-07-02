@@ -18,16 +18,16 @@ class VideoInfo:
         # yt-dlp command line
         command = [ytdlp_path]
 
-        # user-agent + extractor-args são específicos do YouTube. NÃO usar em
-        # outras plataformas: o "Mozilla/5.0" causa HTTP 403 no TikTok.
+        # user-agent + extractor-args are especifics to YouTube. Don't use this
+        # at outher plataforms: the "Mozilla/5.0" cause HTTP 403 on TikTok.
         if is_youtube(url):
             command += [
                 "--user-agent", "Mozilla/5.0",
-                "--extractor-args", "youtube:player_client=web_safari,android_vr",
+                "--extractor-args", "youtube:player_client=web_safari,android_vr", # this 2 player_client are the best for youtube 
             ]
 
         command += [
-            "--js-runtime", f"node:{node_path}",
+            "--js-runtime", f"node:{node_path}", # js-runtime is required at youtube bot detection
             "--no-playlist",
             "--skip-download",
             "-j",
@@ -38,7 +38,7 @@ class VideoInfo:
         if cookies_exists():
             command += ["--cookies", get_cookies_path()]
 
-        # 🔥 Configuração para ocultar janela do console no Windows
+        # Settings to not show windows console window
         creationflags = 0
         if sys.platform == "win32":
             creationflags = subprocess.CREATE_NO_WINDOW
@@ -49,10 +49,10 @@ class VideoInfo:
                 capture_output=True,
                 text=True,
                 creationflags=creationflags,
-                timeout=90,   # defensivo: não deixa a thread presa indefinidamente
+                timeout=90,   # sytem defense: thread doesnt can stay running to infinity
             )
         except subprocess.TimeoutExpired:
-            raise Exception("Tempo esgotado ao obter informações do vídeo")
+            raise Exception("Time out to extract video info")
 
         if result.returncode != 0:
             raise Exception(self._parse_error(result.stderr))
@@ -60,17 +60,17 @@ class VideoInfo:
         try:
             info = json.loads(result.stdout)
         except Exception:
-            raise Exception("Falha ao interpretar resposta do yt-dlp")
+            raise Exception("Fail to read yt-dlp response")
 
         return self._format_response(info)
 
     # ==========================
-    # FORMATAÇÃO FINAL
+    # FINAL FORMATATION
     # ==========================
     def _format_response(self, info: dict):
         formats = info.get("formats", [])
 
-        # 🎯 separa vídeos e áudios
+        # split audio and video
         video_formats = [
             f for f in formats
             if f.get("vcodec") != "none" and f.get("height")
@@ -80,14 +80,14 @@ class VideoInfo:
             if f.get("acodec") != "none" and f.get("vcodec") == "none"
         ]
 
-        # ordena por resolução ou bitrate
+        # order by resolution and bitrate
         video_formats.sort(key=lambda x: x.get("height", 0))
         audio_formats.sort(key=lambda x: x.get("abr", 0))
 
-        # remove duplicados por resolução+ext para vídeos, preservando tamanho
+        # remove duplicated by resolution+ext for videos, preserve size
         seen = set()
         unique_video_formats = []
-        for f in reversed(video_formats):  # maior primeiro
+        for f in reversed(video_formats): 
             h = f.get("height")
             ext = f.get("ext")
             key = (h, ext)
@@ -101,12 +101,12 @@ class VideoInfo:
                     "format_id": f.get("format_id"),
                     "filesize": filesize,
                 })
-        unique_video_formats.reverse()  # menor para maior UI
+        unique_video_formats.reverse()  # smaller to bigger UI
 
-        # remove duplicados por ext e bitrate para áudios, preservando tamanho
+        # remove duplicates by ext and bitrate for audios, preserving size
         seen_audio = set()
         unique_audio_formats = []
-        for f in reversed(audio_formats):  # maior bitrate primeiro
+        for f in reversed(audio_formats):
             ext = f.get("ext")
             abr = f.get("abr")
             key = (ext, abr)
@@ -119,7 +119,7 @@ class VideoInfo:
                     "format_id": f.get("format_id"),
                     "filesize": filesize,
                 })
-        unique_audio_formats.reverse()  # menor para maior UI
+        unique_audio_formats.reverse()  # smaller to bigger UI
 
         return {
             "title": info.get("title", "Sem título"),
@@ -137,25 +137,25 @@ class VideoInfo:
         s = stderr.lower()
 
         if "confirm you're not a bot" in s:
-            return "YouTube bloqueou"
+            return "YouTube block"
 
         if "captcha" in s:
-            return "YouTube bloqueou"
+            return "YouTube block"
 
         if "429" in s:
-            return "Muitas requisições"
+            return "To much requisitions"
 
         if "cookies" in s:
-            return "Erro com cookies"
+            return "Error with cookies"
 
         if "unsupported" in s:
-            return "URL não suportada"
+            return "URL not suported"
 
         if "private" in s:
-            return "Vídeo privado"
+            return "Private Video"
 
         if "sign in" in s:
-            return "É necessário estar logado"
+            return "Login is required - Update your cookies"
 
         return stderr
 
@@ -164,12 +164,12 @@ class VideoInfo:
     # ==========================
     def extract_playlist(self, url: str):
         """
-        Enumera os vídeos de uma playlist (rápido, sem baixar nada).
-        Retorna {"title": str, "entries": [{"url", "title", "id", "duration"}, ...]}
-        ou None se a URL não for uma playlist.
+        Count playlist videos, fast without any donwload
+        Return {"title": str, "entries": [{"url", "title", "id", "duration", "thumbnail"}, ...]}
+        or None if the URL was not a playlist
         """
         if not url:
-            raise ValueError("URL vazia")
+            raise ValueError("null URL")
 
         ytdlp_path = get_ytdlp_path()
 
@@ -200,7 +200,7 @@ class VideoInfo:
         try:
             info = json.loads(result.stdout)
         except Exception:
-            raise Exception("Falha ao interpretar a playlist")
+            raise Exception("Fail to read playlist data")
 
         entries = info.get("entries")
         if info.get("_type") != "playlist" or not entries:
@@ -212,14 +212,14 @@ class VideoInfo:
                 continue
             entry_url = e.get("url") or e.get("webpage_url") or e.get("id")
             if entry_url and not str(entry_url).startswith("http"):
-                # fallback: monta URL do YouTube a partir do id
+                # fallback: build Youtube URL using ID
                 if is_youtube(url):
                     entry_url = f"https://www.youtube.com/watch?v={entry_url}"
-            # ADICIONAR THUMBNAIL
-            # Para YouTube, a thumb pode ser montada a partir do ID
+            
+            # ---- ENTRANCE THUMBNAIL ----
             thumb = e.get("thumbnail")
             if not thumb and is_youtube(url) and e.get("id"):
-                # Monta URL da thumbnail do YouTube a partir do ID do vídeo
+                # Build thumbnail URL using the video ID
                 vid_id = e.get("id")
                 thumb = f"https://img.youtube.com/vi/{vid_id}/mqdefault.jpg"
             
@@ -228,7 +228,7 @@ class VideoInfo:
                 "title": e.get("title") or "(sem título)",
                 "id": e.get("id"),
                 "duration": e.get("duration"),
-                "thumbnail": thumb,  # <-- ADICIONADO
+                "thumbnail": thumb,
             })
 
         return {
@@ -238,16 +238,15 @@ class VideoInfo:
 
 
 # ==========================
-# PREVIEW (URL TOCÁVEL)
+# PREVIEW (CHANGEABLE URL)
 # ==========================
 def pick_preview_url(info: dict):
     """
-    Escolhe, entre os formatos brutos, uma URL progressiva (vídeo+áudio juntos)
-    para o QMediaPlayer. Prioriza a MENOR resolução progressiva em mp4 — o
-    preview é só para o usuário visualizar onde cortar, então estabilidade
-    importa mais que qualidade (a qualidade do download é a que o usuário
-    selecionou, independente do preview). Retorna None se não houver formato
-    progressivo.
+    Choose between the raw formats, a progressive URL (video+audio)
+    used on QMediaPlayer, Priorize the smaller profressive resolution with mp4.
+    Preview is useful only for the user view and cut, so estalibity is more 
+    important tha quality here, the download quality is selected separeted.
+    Return None if has'nt progressive format avalible.
     """
     if not info:
         return None
@@ -273,9 +272,9 @@ def pick_preview_url(info: dict):
     def score(item):
         f, is_hls = item
         height = f.get("height") or 9999
-        not_hls = 0 if is_hls else 1            # prefere não-HLS (mais estável)
+        not_hls = 0 if is_hls else 1            # prefer non-HLS (more stable)
         is_mp4 = 1 if (f.get("ext") == "mp4") else 0
-        # -height => a MENOR resolução vence (mais leve/estável p/ tocar)
+        # -height => the smaller resolution is more stable to play
         return (not_hls, is_mp4, -height)
 
     best = max(progressive, key=score)

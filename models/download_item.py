@@ -6,8 +6,8 @@ class DownloadItem:
     def __init__(self, url, title, original_title=None, format_type="MP4", quality="best", quality_id=None, thumbnail=None, status="pending", output_path=None, file_path=None, filesize=None, clip_start=None, clip_end=None, overwrite=False):
         self.id = str(uuid.uuid4())
         self.url = url
-        self.title = title          # nome do arquivo (pode ser personalizado)
-        self.original_title = original_title or title  # título original do vídeo
+        self.title = title          # file name
+        self.original_title = original_title or title  # original video title
         self.format_type = format_type
         self.quality = quality
         self.quality_id = quality_id
@@ -17,10 +17,10 @@ class DownloadItem:
         self.file_path = file_path
         self.created_at = time.time()
         self.filesize = filesize
-        # corte de trecho (em segundos); None = vídeo completo
+        # video clip
         self.clip_start = clip_start
         self.clip_end = clip_end
-        # se True, sobrescreve arquivo existente (--force-overwrites)
+        # if True, replace the old file (--force-overwrites)
         self.overwrite = overwrite
 
     def to_dict(self):

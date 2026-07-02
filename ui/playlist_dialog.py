@@ -240,7 +240,7 @@ class PlaylistDialog(QDialog):
                 original_title=base_title,
                 format_type=fmt,
                 quality="Melhor qualidade (até 1080p)",
-                quality_id=quality_id,  # limitado a 1080p
+                quality_id=quality_id,
                 thumbnail=entry.get("thumbnail"),
                 status="pending",
                 output_path=folder,

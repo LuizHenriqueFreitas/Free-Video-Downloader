@@ -1,3 +1,5 @@
+# services/download_service.py
+
 from collections import deque
 from threading import RLock
 from PySide6.QtCore import QThread
@@ -6,22 +8,22 @@ from ui.workers.download_worker import DownloadWorker
 
 class DownloadService:
     """
-    Gerencia uma fila única de downloads com um limite de execuções
-    simultâneas (máx. 3). Os demais ficam aguardando na fila.
+    It manages a single download queue with a limit on simultaneous
+    executions (max. 3); remaining tasks wait in the queue.
 
-    Os handlers de término são conectados como funções (conexão direta),
-    executando na própria thread do worker — assim a thread encerra a si
-    mesma de forma limpa. A segurança da UI é garantida pelo consumidor
-    (MainWindow), cujos callbacks apenas emitem sinais marshalados para a
-    thread principal.
+    Completion handlers are connected as functions (direct connection)
+    running within the worker thread itself—allowing the thread to
+    terminate cleanly. UI safety is ensured by the consumer
+    (MainWindow), whose callbacks merely emit marshaled signals to the
+    main thread.
 
-    Como `start_download` (thread principal) e os handlers de término
-    (thread do worker) mexem em `queue`/`running`, todas as mutações desse
-    estado são protegidas por um RLock — evita corridas que deixavam itens
-    presos na fila.
+    Since `start_download` (main thread) and the completion handlers
+    (worker thread) modify `queue` and `running`, all state mutations
+    are protected by an RLock—preventing race conditions that previously
+    left items stuck in the queue.
 
-    A API (start_download / queue / running / max_downloads / workers /
-    threads / cancel_download) é mantida estável para os testes.
+    The API (start_download / queue / running / max_downloads / workers /
+    threads / cancel_download) is kept stable for testing purposes.
     """
 
     def __init__(self):
@@ -50,7 +52,7 @@ class DownloadService:
             self._process_queue()
 
     # ==========================
-    # FILA
+    # QUEUE
     # ==========================
     def _process_queue(self):
         with self._lock:
@@ -95,12 +97,12 @@ class DownloadService:
             lambda emitted_item: self._handle_cancel(emitted_item, on_cancel)
         )
 
-        # Encerrar a thread quando o worker terminar (Qt não aceita args aqui)
+        # Terminate the thread when the worker finishes (Qt does not accept arguments here)
         worker.finished.connect(lambda *_: thread.quit())
         worker.error.connect(lambda *_: thread.quit())
         worker.cancelled.connect(lambda *_: thread.quit())
 
-        # Limpeza final das referências quando a thread realmente terminar
+        # Final cleanup of references when the thread actually terminates.
         thread.finished.connect(lambda: self._on_thread_finished(item.id))
         thread.finished.connect(worker.deleteLater)
         thread.finished.connect(thread.deleteLater)
@@ -135,28 +137,28 @@ class DownloadService:
             self._finalize_download(item.id)
 
     # ==========================
-    # FINALIZAÇÃO
+    # FINALIZATION
     # ==========================
     def _finalize_download(self, item_id):
-        # libera o slot e processa o próximo da fila
+        # frees up the slot and processes the next one in the queue
         with self._lock:
             if self.running > 0:
                 self.running -= 1
             self._process_queue()
 
     def _on_thread_finished(self, item_id):
-        # remove referências só depois que a thread terminou de fato
+        # Remove references only after the thread has actually finished.
         with self._lock:
             self.threads.pop(item_id, None)
             self.workers.pop(item_id, None)
 
     # ==========================
-    # ENCERRAMENTO (fechar o app)
+    # APP SHUTDOWN
     # ==========================
     def shutdown(self, timeout_ms=4000):
         """
-        Cancela tudo e aguarda as threads terminarem, para o app fechar sem o
-        aviso 'QThread: Destroyed while thread is still running'.
+        Cancels everything and waits for the threads to finish, so the app closes without the
+        'QThread: Destroyed while thread is still running' warning..
         """
         with self._lock:
             self.queue.clear()
@@ -165,7 +167,7 @@ class DownloadService:
 
         for item_id in active_ids:
             try:
-                self.cancel_download(item_id)   # mata yt-dlp+ffmpeg (taskkill)
+                self.cancel_download(item_id)   # kill yt-dlp+ffmpeg (taskkill)
             except Exception:
                 pass
 
@@ -177,11 +179,11 @@ class DownloadService:
                 pass
 
     # ==========================
-    # CANCELAMENTO
+    # CANCELING
     # ==========================
     def cancel_download(self, item_id):
-        # 1) Download ativo: pega o worker sob lock, mas chama cancel()
-        #    FORA do lock (taskkill pode bloquear por instantes).
+        # 1) Active download: acquires the worker under a lock but calls cancel().
+        #    OUTSIDE the lock (taskkill might block briefly).
         with self._lock:
             worker = self.workers.get(item_id)
 
@@ -192,7 +194,7 @@ class DownloadService:
                 print(f"Erro ao cancelar: {e}")
             return
 
-        # 2) Ainda na fila: remove e avisa a UI (não ocupava slot)
+        # 2) Still in the queue: removes it and notifies the UI (did not occupy a slot)
         cancelled_item = None
         on_cancel = None
         with self._lock:

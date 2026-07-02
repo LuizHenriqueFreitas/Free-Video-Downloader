@@ -307,6 +307,42 @@ class DownloadDialog(QDialog):
         else:
             return "cancel"
 
+    def _extract_playlist_id_from_video_url(self, url):
+        """Extrai ID da playlist de uma URL de vídeo do YouTube (&list=...)"""
+        import re
+        match = re.search(r'[&?]list=([a-zA-Z0-9_-]+)', url)
+        return match.group(1) if match else None
+
+    def _build_playlist_url_from_id(self, playlist_id):
+        """Converte ID da playlist em URL completa"""
+        return f"https://www.youtube.com/playlist?list={playlist_id}"
+
+    def _ask_single_or_playlist(self, video_url, playlist_url):
+        """Pergunta ao usuário se quer baixar só o vídeo ou a playlist inteira"""
+        msg = QMessageBox(self)
+        msg.setWindowTitle("Playlist detectada")
+        msg.setIcon(QMessageBox.Question)
+        msg.setText(
+            "🔗 **Playlist detectada!**\n\n"
+            "A URL informada pertence a uma playlist do YouTube.\n\n"
+            "O que você deseja baixar?"
+        )
+        
+        btn_video = msg.addButton("📹 Apenas este vídeo", QMessageBox.AcceptRole)
+        btn_playlist = msg.addButton("📋 Toda a playlist", QMessageBox.AcceptRole)
+        btn_cancel = msg.addButton("Cancelar", QMessageBox.RejectRole)
+        msg.setDefaultButton(btn_video)
+        
+        msg.exec()
+        
+        clicked = msg.clickedButton()
+        if clicked == btn_video:
+            return "single"
+        elif clicked == btn_playlist:
+            return "playlist"
+        else:
+            return "cancel"
+
     # ==========================
     # LOAD (THREAD SAFE)
     # ==========================
@@ -319,9 +355,9 @@ class DownloadDialog(QDialog):
             self.status_label.setText("⚠ Cookies não configurados")
             return
 
-        # ---- NOVO: Detectar playlist em URL de vídeo (&list=) ----
+        # ---- DETECTAR PLAYLIST EM URL DE VÍDEO (&list=) ----
         playlist_id = self._extract_playlist_id_from_video_url(url)
-        if playlist_id and not is_youtube_playlist(url):  # é URL de vídeo DENTRO de playlist
+        if playlist_id and not is_youtube_playlist(url):
             playlist_url = self._build_playlist_url_from_id(playlist_id)
             choice = self._ask_single_or_playlist(url, playlist_url)
             
@@ -329,21 +365,21 @@ class DownloadDialog(QDialog):
                 self.status_label.setText("Cancelado pelo usuário")
                 return
             elif choice == "playlist":
-                # Redireciona para carregar a playlist inteira
-                self.url_input.setText(playlist_url)  # atualiza UI opcionalmente
-                self._load_video_info()  # recarrega como playlist
+                # Carrega a playlist inteira
+                self._start_playlist_worker(playlist_url, str(uuid4()))
                 return
-            # choice == "single": continua o fluxo normal de vídeo único
+            # choice == "single": continua fluxo normal de vídeo único
 
+        # ---- RESTANTE DO CÓDIGO ORIGINAL ----
         # Abandona qualquer requisição anterior
         self._abandon_thread()
         self._reset_video_state()
-
+        
         request_id = str(uuid4())
         self._current_request_id = request_id
         self._loading_url = url
 
-        # ---- Playlist do YouTube ----
+        # ---- Playlist do YouTube (clássica) ----
         if is_youtube_playlist(url):
             self.status_label.setText("Carregando playlist...")
             self._start_playlist_worker(url, request_id)

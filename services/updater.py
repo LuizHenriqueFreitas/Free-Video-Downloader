@@ -7,19 +7,19 @@ import shutil
 from core.utils import get_ytdlp_path
 import subprocess
 
-
+# get yt-dlp last version
 YTDLP_DOWNLOAD_URL = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe"
 
 # ==========================
-# VERSÃO DO APP / RELEASE NO GITHUB
+# APP VERSION / GITHUB RELEASE
 # ==========================
-APP_VERSION = "2.0.0"
+APP_VERSION = "2.5.0" # app actual version
 GITHUB_REPO = "LuizHenriqueFreitas/Free-Video-Downloader"
 GITHUB_RELEASES_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 
 
 def _parse_version(text):
-    """'v2.1.0' -> (2, 1, 0). Ignora sufixos não numéricos."""
+    """'v2.1.0' -> (2, 1, 0). Ignores non-numeric suffixes."""
     nums = re.findall(r"\d+", text or "")
     return tuple(int(n) for n in nums[:3]) if nums else ()
 
@@ -28,7 +28,7 @@ def _is_newer(candidate, current):
     cv, curv = _parse_version(candidate), _parse_version(current)
     if not cv:
         return False
-    # normaliza tamanhos (ex.: (2,1) vs (2,0,0))
+    # normalize sizes (ex.: (2,1) vs (2,0,0))
     length = max(len(cv), len(curv))
     cv += (0,) * (length - len(cv))
     curv += (0,) * (length - len(curv))
@@ -37,9 +37,9 @@ def _is_newer(candidate, current):
 
 def check_app_update():
     """
-    Consulta a release mais recente do projeto no GitHub.
-    Retorna (atualizacao_disponivel: bool, versao_mais_nova: str|None).
-    Em caso de falha de rede/API, retorna (False, None) silenciosamente.
+    Checks the project's latest release on GitHub.
+    Returns (update_available: bool, latest_version: str|None).
+    In case of network or API failure, silently returns (False, None).
     """
     try:
         r = requests.get(
@@ -92,9 +92,9 @@ def check_and_update():
     try:
         temp_file = download_latest()
         replace_binary(temp_file)
-        return True, "yt-dlp atualizado com sucesso!"
+        return True, "yt-dlp updated with sucess!"
     except Exception as e:
-        return False, f"Erro ao atualizar: {str(e)}"
+        return False, f"Update Error: {str(e)}"
     
 def get_installed_version():
     try:
