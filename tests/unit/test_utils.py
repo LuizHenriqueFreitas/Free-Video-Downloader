@@ -31,7 +31,12 @@ def test_resource_path_pyinstaller(monkeypatch):
 def test_get_ytdlp_path():
     path = utils.get_ytdlp_path()
 
-    assert "yt-dlp.exe" in path
+    if sys.platform == "win32":
+        assert "yt-dlp.exe" in path
+    else:
+        assert "yt-dlp" in path
+
+    # implement a metod to verify the embed folder "/bin/yt-dlp.exe"
 
 
 # ==========================
@@ -41,7 +46,10 @@ def test_get_ytdlp_path():
 def test_get_ffmpeg_path():
     path = utils.get_ffmpeg_path()
 
-    assert "ffmpeg" in path.lower()
+    if sys.platform == "win32":
+        assert "ffmpeg" in path.lower()
+    else:
+        assert "ffmpeg" in path
 
 
 # ==========================
@@ -49,14 +57,16 @@ def test_get_ffmpeg_path():
 # ==========================
 
 def test_get_node_path_exists(monkeypatch):
-    fake_path = "/fake/node.exe"
-
-    monkeypatch.setattr(utils, "resource_path", lambda x: fake_path)
-    monkeypatch.setattr(os.path, "exists", lambda x: True)
 
     path = utils.get_node_path()
 
-    assert path == fake_path
+    assert path is not None
+    assert isinstance(path, str)
+    assert os.access(path, os.X_OK)
+    if sys.platform == "win32":
+        assert path.endswith('.exe') or 'node' in path.lower()
+    else:
+        assert 'node' in path
 
 
 def test_get_node_path_not_exists(monkeypatch):

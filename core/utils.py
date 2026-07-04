@@ -4,7 +4,7 @@ import sys
 import os
 import re
 import stat
-
+import shutil
 
 # ==========================
 # PLATAFORM / URL
@@ -149,17 +149,49 @@ def resource_path(relative_path):
     return os.path.join(os.path.abspath("."), relative_path)
 
 def get_ytdlp_path():
-    return resource_path("bin/yt-dlp.exe")
+    if sys.platform == "win32":
+        return resource_path("bin/yt-dlp.exe")
+    else:
+        # Tenta encontrar no sistema primeiro
+        yt_dlp = shutil.which('yt-dlp')
+        if yt_dlp:
+            return yt_dlp
+        
+        raise Exception("yt-dlp não encontrado. Instale com: pip install yt-dlp")
 
 def get_ffmpeg_path():
-    # Retorn the directorio, not the file, to --ffmpeg-location
-    return resource_path("tools/ffmpeg/bin/")
+    if sys.platform == "win32":
+        return resource_path("tools/ffmpeg/bin/")
+    else:
+        # Usa o ffmpeg do sistema
+        ffmpeg = shutil.which('ffmpeg')
+        if ffmpeg:
+            return ffmpeg
+        
+        raise Exception("FFmpeg não encontrado. Instale com: sudo apt install ffmpeg")
 
 def get_node_path():
-    path = resource_path("bin/node/node.exe")
-    if not os.path.exists(path):
-        raise Exception("Node não encontrado no projeto")
-    return path
+    """
+    Retorna o caminho do Node.js de forma flexível para Windows e Linux
+    """
+    if sys.platform == "win32":
+        # Windows: procura no projeto primeiro
+        node_paths = [
+            resource_path("bin/node/node.exe"),  # Seu caminho atual
+            resource_path("node.exe"),           # Fallback
+            "node.exe",                          # Sistema
+            "node"                               # Último recurso
+        ]
+    else:
+        # Linux/macOS: procura no sistema primeiro
+        node = shutil.which('node')
+        if node:
+            return node
+    
+    raise Exception(
+        "Node.js não encontrado!\n Linux: Instale com 'sudo apt install nodejs' ou use nvm"
+    )
+
 
 # ==========================
 # COOKIES (user data)
