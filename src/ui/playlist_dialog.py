@@ -7,9 +7,9 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QThread, QObject, Signal, QSize
 from PySide6.QtGui import QPixmap
 
-from models.download_item import DownloadItem
-from core.utils import resolve_unique_title, safe_filename
-from storage.settings_store import SettingsStore
+from src.models.download_item import DownloadItem
+from src.core.utils import resolve_unique_title, safe_filename
+from src.storage.settings_store import SettingsStore
 
 
 def _fmt_duration(seconds):

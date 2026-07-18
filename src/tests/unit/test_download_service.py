@@ -2,7 +2,7 @@ import uuid
 from unittest.mock import patch
 from PySide6.QtCore import QObject, Signal, QTimer, QEventLoop
 
-from services.download_service import DownloadService
+from src.services.download_service import DownloadService
 
 # ==========================
 # FAKE ITEM

@@ -2,7 +2,7 @@
 
 import pytest
 from datetime import datetime
-from models.download_item import DownloadItem
+from src.models.download_item import DownloadItem
 
 
 @pytest.fixture(scope="session", autouse=True)

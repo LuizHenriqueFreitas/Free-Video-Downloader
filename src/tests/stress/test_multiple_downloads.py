@@ -3,7 +3,7 @@ import random
 import pytest
 from PySide6.QtCore import QObject, Signal, QThread
 
-from services.download_service import DownloadService
+from src.services.download_service import DownloadService
 
 
 # ==========================

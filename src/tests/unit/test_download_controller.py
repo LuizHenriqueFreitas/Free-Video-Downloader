@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import MagicMock
 
-from controllers.download_controller import DownloadController
+from src.controllers.download_controller import DownloadController
 
 
 # ==========================

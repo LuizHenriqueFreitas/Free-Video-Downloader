@@ -10,7 +10,7 @@ from PySide6.QtGui import QPixmap
 from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PySide6.QtMultimediaWidgets import QVideoWidget
 
-from ui.components.range_slider import RangeSlider
+from src.ui.components.range_slider import RangeSlider
 
 
 def format_time(seconds):

@@ -487,7 +487,7 @@ class DownloadDialog(QDialog):
             f"✔ Playlist carregada: {len(playlist['entries'])} vídeos"
         )
 
-        from ui.playlist_dialog import PlaylistDialog
+        from src.ui.playlist_dialog import PlaylistDialog
         dlg = PlaylistDialog(playlist, self)
         if dlg.exec():
             self._results = dlg.get_result()
@@ -509,7 +509,7 @@ class DownloadDialog(QDialog):
         self._destroy_trimmer()
 
         # import tardio para isolar dependência de QtMultimedia
-        from ui.components.clip_trimmer import ClipTrimmer
+        from src.ui.components.clip_trimmer import ClipTrimmer
 
         duration = self.video_info.get("duration")
         self.trimmer = ClipTrimmer(duration, self._current_thumb_path)

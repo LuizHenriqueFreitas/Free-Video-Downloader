@@ -2,7 +2,7 @@ import json
 import pytest
 from unittest.mock import patch, MagicMock
 
-from core.video_info import VideoInfo
+from src.core.video_info import VideoInfo
 
 
 # ==========================

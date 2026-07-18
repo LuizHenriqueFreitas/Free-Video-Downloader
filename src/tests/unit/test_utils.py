@@ -2,7 +2,7 @@ import os
 import sys
 import pytest
 
-from core import utils
+from src.core import utils
 
 
 # ==========================

@@ -2,7 +2,7 @@ import pytest
 from unittest.mock import patch
 import io
 
-from ui.workers.download_worker import DownloadWorker, safe_filename
+from src.ui.workers.download_worker import DownloadWorker, safe_filename
 
 
 # ==========================

@@ -2,8 +2,8 @@ import json
 import pytest
 from datetime import datetime, timedelta
 
-from storage.history_store import HistoryStore
-from models.download_item import DownloadItem
+from src.storage.history_store import HistoryStore
+from src.models.download_item import DownloadItem
 
 
 # ==========================

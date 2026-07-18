@@ -1,7 +1,0 @@
-# Runtime dependencies
-PySide6>=6.6
-requests>=2.31
-
-# Development / testing
-pytest>=8.0
-pytest-qt>=4.4        # fixture qtbot + QApplication de sessão p/ testes com QThread
