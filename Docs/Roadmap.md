@@ -51,7 +51,7 @@ Allows donwloads from instagram, X, Tiktok in addition to youtube.
 
 Allows downloads of youtube playlists or queues.
 
-Provides a trimmer tool for just youtube videos, you can cut a clip and get only this.
+Provides a trimmer tool for any site yt-dlp can download (preview with sound and time-bar), you can cut a clip and get only this.
 
 Code review and documentation for new versions and more reability of the app.
 

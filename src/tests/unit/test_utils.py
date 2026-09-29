@@ -275,6 +275,24 @@ class TestResolveUniqueTitle:
         result = utils.resolve_unique_title(str(tmp_path), "vid:eo?", "mp4")
         assert result == "video"
 
+    def test_reserved_name_is_skipped(self, tmp_path):
+        # playlist: other video of the same playlist already took "video"
+        result = utils.resolve_unique_title(str(tmp_path), "video", "mp4", reserved={"video"})
+        assert result == "video (1)"
+
+    def test_reserved_and_disk_conflicts_together(self, tmp_path):
+        (tmp_path / "video (2).mp4").write_text("data")
+        result = utils.resolve_unique_title(str(tmp_path), "video", "mp4",
+                                            reserved={"video", "video (1)"})
+        assert result == "video (3)"
+
+    def test_repeated_titles_never_loop_forever(self, tmp_path):
+        # regression: "[Private video]" twice froze the playlist dialog
+        used = set()
+        for _ in range(3):
+            used.add(utils.resolve_unique_title(str(tmp_path), "[Private video]", "mp4", reserved=used))
+        assert used == {"[Private video]", "[Private video] (1)", "[Private video] (2)"}
+
 
 # ---------------------------------------------------------------------------
 # get_user_data_dir
@@ -346,10 +364,20 @@ class TestResourcePath:
 class TestGetYtdlpPath:
 
     def test_windows_returns_bundled_path(self, monkeypatch):
+        # bundled src/bin/yt-dlp.exe exists and runs -> it's used
         monkeypatch.setattr(utils.sys, "platform", "win32")
-        monkeypatch.setattr(sys, "_MEIPASS", "/fake/meipass", raising=False)
+        monkeypatch.setattr(utils.os.path, "exists", lambda path: True)
+        monkeypatch.setattr(utils, "_ytdlp_binary_runs", lambda path: True)
         result = utils.get_ytdlp_path()
-        assert result == os.path.join("/fake/meipass", "bin/yt-dlp.exe")
+        assert result == os.path.normpath(
+            os.path.join(os.path.dirname(os.path.abspath(utils.__file__)), "..", "bin", "yt-dlp.exe")
+        )
+
+    def test_windows_falls_back_to_path_when_bundled_missing(self, monkeypatch):
+        monkeypatch.setattr(utils.sys, "platform", "win32")
+        monkeypatch.setattr(utils.os.path, "exists", lambda path: False)
+        monkeypatch.setattr(shutil, "which", lambda name: "C:/tools/yt-dlp.exe")
+        assert utils.get_ytdlp_path() == "C:/tools/yt-dlp.exe"
 
     def test_linux_uses_bundled_binary_when_present_and_executable(self, monkeypatch):
         monkeypatch.setattr(utils.sys, "platform", "linux")
@@ -405,8 +433,25 @@ class TestGetFfmpegPath:
     def test_windows_returns_bundled_path(self, monkeypatch):
         monkeypatch.setattr(utils.sys, "platform", "win32")
         monkeypatch.setattr(sys, "_MEIPASS", "/fake/meipass", raising=False)
+        monkeypatch.setattr(utils.os.path, "isfile", lambda path: True)
         result = utils.get_ffmpeg_path()
         assert result == os.path.join("/fake/meipass", "tools/ffmpeg/bin/")
+
+    def test_windows_falls_back_to_path_when_bundled_missing(self, monkeypatch):
+        # without this yt-dlp ran without ffmpeg and left 2 files (video + audio)
+        monkeypatch.setattr(utils.sys, "platform", "win32")
+        monkeypatch.setattr(sys, "_MEIPASS", "/fake/meipass", raising=False)
+        monkeypatch.setattr(utils.os.path, "isfile", lambda path: False)
+        monkeypatch.setattr(shutil, "which", lambda name: "C:/ffmpeg/bin/ffmpeg.exe")
+        assert utils.get_ffmpeg_path() == "C:/ffmpeg/bin/ffmpeg.exe"
+
+    def test_windows_raises_when_not_found_anywhere(self, monkeypatch):
+        monkeypatch.setattr(utils.sys, "platform", "win32")
+        monkeypatch.setattr(sys, "_MEIPASS", "/fake/meipass", raising=False)
+        monkeypatch.setattr(utils.os.path, "isfile", lambda path: False)
+        monkeypatch.setattr(shutil, "which", lambda name: None)
+        with pytest.raises(Exception, match="FFmpeg"):
+            utils.get_ffmpeg_path()
 
     def test_linux_uses_which_when_found(self, monkeypatch):
         monkeypatch.setattr(utils.sys, "platform", "linux")
@@ -445,12 +490,16 @@ class TestGetNodePath:
         with pytest.raises(Exception, match="desatualizado"):
             utils.get_node_path()
 
-    def test_windows_currently_always_raises(self, monkeypatch):
-        # NOTA: no branch win32 a função monta a lista `node_paths` mas nunca
-        # a utiliza (não faz `return` nem checagem de existência), então o
-        # fluxo cai direto no `raise Exception` final. Este teste documenta
-        # o comportamento atual da implementação (provável bug).
+    def test_windows_uses_bundled_node_when_supported(self, monkeypatch):
         monkeypatch.setattr(utils.sys, "platform", "win32")
+        monkeypatch.setattr(utils.os.path, "exists", lambda path: True)
+        monkeypatch.setattr(utils, "_node_version_supported", lambda path: True)
+        assert utils.get_node_path() == utils.resource_path("bin/node/node.exe")
+
+    def test_windows_raises_when_not_found(self, monkeypatch):
+        monkeypatch.setattr(utils.sys, "platform", "win32")
+        monkeypatch.setattr(utils.os.path, "exists", lambda path: False)
+        monkeypatch.setattr(shutil, "which", lambda name: None)
         with pytest.raises(Exception, match="Node.js"):
             utils.get_node_path()
 
@@ -596,9 +645,116 @@ class TestGetFfmpegExe:
         result = utils.get_ffmpeg_exe()
         assert result == "ffmpeg.exe"
 
+    def test_returns_path_when_ffmpeg_path_is_the_executable(self, tmp_path, monkeypatch):
+        # Linux / system PATH: get_ffmpeg_path() returns the executable itself
+        exe = tmp_path / "ffmpeg"
+        exe.write_text("")
+        monkeypatch.setattr(utils, "get_ffmpeg_path", lambda: str(exe))
+        assert utils.get_ffmpeg_exe() == str(exe)
+
     def test_propagates_exception_when_ffmpeg_path_fails(self, monkeypatch):
         def raise_error():
             raise Exception("FFmpeg não encontrado.")
         monkeypatch.setattr(utils, "get_ffmpeg_path", raise_error)
         with pytest.raises(Exception, match="FFmpeg"):
             utils.get_ffmpeg_exe()
+
+# ---------------------------------------------------------------------------
+# get_ffprobe_exe
+# ---------------------------------------------------------------------------
+
+class TestGetFfprobeExe:
+
+    def test_uses_ffprobe_next_to_ffmpeg(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(utils.sys, "platform", "linux")
+        (tmp_path / "ffprobe").write_text("")
+        monkeypatch.setattr(utils, "get_ffmpeg_exe", lambda: str(tmp_path / "ffmpeg"))
+        assert utils.get_ffprobe_exe() == str(tmp_path / "ffprobe")
+
+    def test_falls_back_to_path(self, monkeypatch):
+        monkeypatch.setattr(utils.sys, "platform", "linux")
+        monkeypatch.setattr(utils, "get_ffmpeg_exe", lambda: "ffmpeg")
+        monkeypatch.setattr(shutil, "which", lambda name: "/usr/bin/ffprobe")
+        assert utils.get_ffprobe_exe() == "/usr/bin/ffprobe"
+
+    def test_raises_when_not_found(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(utils.sys, "platform", "linux")
+        monkeypatch.setattr(utils, "get_ffmpeg_exe", lambda: str(tmp_path / "ffmpeg"))
+        monkeypatch.setattr(shutil, "which", lambda name: None)
+        with pytest.raises(Exception, match="FFprobe"):
+            utils.get_ffprobe_exe()
+
+
+# ---------------------------------------------------------------------------
+# get_h264_video_args (GPU detection)
+# ---------------------------------------------------------------------------
+
+class TestGetH264VideoArgs:
+
+    @pytest.fixture(autouse=True)
+    def _reset_cache(self, monkeypatch):
+        monkeypatch.setattr(utils, "_h264_args_cache", None)
+        monkeypatch.setattr(utils, "get_ffmpeg_exe", lambda: "/fake/ffmpeg")
+
+    def _fake_works(self, monkeypatch, working):
+        tested = []
+
+        def fake(ffmpeg_exe, args):
+            name = args[args.index("-c:v") + 1]
+            tested.append(name)
+            return name in working
+
+        monkeypatch.setattr(utils, "_encoder_works", fake)
+        return tested
+
+    def test_nvidia_first(self, monkeypatch):
+        tested = self._fake_works(monkeypatch, {"h264_nvenc", "h264_qsv"})
+        args = utils.get_h264_video_args()
+        assert "h264_nvenc" in args
+        assert tested == ["h264_nvenc"]
+
+    def test_intel_when_no_nvidia(self, monkeypatch):
+        self._fake_works(monkeypatch, {"h264_qsv"})
+        assert "h264_qsv" in utils.get_h264_video_args()
+
+    def test_amd_when_no_nvidia_and_intel(self, monkeypatch):
+        self._fake_works(monkeypatch, {"h264_amf"})
+        assert "h264_amf" in utils.get_h264_video_args()
+
+    def test_cpu_when_no_gpu(self, monkeypatch):
+        self._fake_works(monkeypatch, set())
+        assert utils.get_h264_video_args() == utils.CPU_H264_ARGS
+
+    def test_cpu_when_ffmpeg_missing(self, monkeypatch):
+        def raise_error():
+            raise Exception("FFmpeg não encontrado")
+        monkeypatch.setattr(utils, "get_ffmpeg_exe", raise_error)
+        assert utils.get_h264_video_args() == utils.CPU_H264_ARGS
+
+    def test_detects_only_once(self, monkeypatch):
+        tested = self._fake_works(monkeypatch, set())
+        utils.get_h264_video_args()
+        utils.get_h264_video_args()
+        assert len(tested) == len(utils.H264_ENCODERS)
+
+    def test_returns_a_copy(self, monkeypatch):
+        self._fake_works(monkeypatch, set())
+        utils.get_h264_video_args().append("changed")
+        assert "changed" not in utils.get_h264_video_args()
+
+    def test_every_encoder_forces_8bit(self):
+        # 10-bit sources would become "High 10" H.264, editors don't open it
+        for _name, args in utils.H264_ENCODERS + [("cpu", utils.CPU_H264_ARGS)]:
+            assert "-pix_fmt" in args
+
+    def test_encoder_works_false_on_exception(self, monkeypatch):
+        def raise_error(*a, **k):
+            raise OSError("no ffmpeg")
+        monkeypatch.setattr(utils.subprocess, "run", raise_error)
+        assert utils._encoder_works("/fake/ffmpeg", ["-c:v", "h264_nvenc"]) is False
+
+    def test_encoder_works_uses_return_code(self, monkeypatch):
+        class Result:
+            returncode = 0
+        monkeypatch.setattr(utils.subprocess, "run", lambda *a, **k: Result())
+        assert utils._encoder_works("/fake/ffmpeg", ["-c:v", "libx264"]) is True

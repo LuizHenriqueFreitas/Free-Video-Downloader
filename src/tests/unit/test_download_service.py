@@ -77,6 +77,7 @@ class FakeWorker:
         self.finished = FakeSignal()
         self.error = FakeSignal()
         self.cancelled = FakeSignal()
+        self.conversion_progress = FakeSignal()
         self.run_called = False
         self.cancel_called = False
         self.cancel_raises = None
@@ -210,6 +211,32 @@ class TestStartDownload:
         worker = worker_factory.created[1]
         worker.progress.emit(42)
         assert calls["progress"] == [42]
+
+    def test_conversion_progress_forwarded_when_callback_given(self, service, worker_factory):
+        item = FakeItem(1)
+        _, *cbs = make_callbacks()
+        received = []
+        service.start_download(item, *cbs, on_conversion=lambda *a: received.append(a))
+
+        worker_factory.created[1].conversion_progress.emit("convert", 42, 120)
+        assert received == [("convert", 42, 120)]
+
+    def test_conversion_callback_is_optional(self, service, worker_factory):
+        # old calls (without on_conversion) keep working
+        item = FakeItem(1)
+        _, *cbs = make_callbacks()
+        service.start_download(item, *cbs)
+        worker_factory.created[1].conversion_progress.emit("convert", 10, -1)
+
+    def test_queued_item_keeps_conversion_callback(self, service, worker_factory):
+        received = []
+        for i in range(1, 5):
+            _, *cbs = make_callbacks()
+            service.start_download(FakeItem(i), *cbs, on_conversion=lambda *a: received.append(a))
+        # frees a slot: item 4 leaves the queue and starts
+        worker_factory.created[1].finished.emit(FakeItem(1))
+        worker_factory.created[4].conversion_progress.emit("cut", 5, -1)
+        assert received == [("cut", 5, -1)]
 
 
 # ---------------------------------------------------------------------------

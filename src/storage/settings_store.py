@@ -15,6 +15,7 @@ DEFAULTS = {
     "advanced_mode": False,         # id true active trimm mode
     "skip_remove_confirm": False,   # skip history remove warning
     "skip_playlist_warning": False, # skip download playlist warning
+    "skip_conversion_warning": False, # skip "this quality needs conversion" warning
 }
 
 ALLOWED_HISTORY_COUNTS = (10, 20, 50)
@@ -91,6 +92,14 @@ class SettingsStore:
     # set new default config to playlist warning
     def set_skip_playlist_warning(self, value: bool):
         self._set_bool("skip_playlist_warning", value)
+
+    # get actual config to conversion warning
+    def get_skip_conversion_warning(self) -> bool:
+        return self._get_bool("skip_conversion_warning", DEFAULTS["skip_conversion_warning"])
+
+    # set new default config to conversion warning
+    def set_skip_conversion_warning(self, value: bool):
+        self._set_bool("skip_conversion_warning", value)
 
     # get actual config to skip remove confirm
     def get_skip_remove_confirm(self) -> bool:

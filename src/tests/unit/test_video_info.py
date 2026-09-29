@@ -18,7 +18,7 @@ import sys
 import pytest
 
 from core import video_info as vi
-from core.video_info import VideoInfo, pick_preview_url
+from core.video_info import VideoInfo, PreviewDownloader
 
 
 # ---------------------------------------------------------------------------
@@ -73,8 +73,20 @@ class TestExtract:
         cmd = captured["command"]
         assert "--user-agent" in cmd
         assert "Mozilla/5.0" in cmd
-        assert "--extractor-args" in cmd
-        assert "youtube:player_client=web_safari,android_vr" in cmd
+        # client settings are empty today (the fixed clients returned HTTP 403)
+        assert "--extractor-args" not in cmd
+
+    def test_youtube_command_uses_client_settings_when_set(self, video, monkeypatch):
+        monkeypatch.setattr(vi, "YOUTUBE_CLIENT_SETTINGS", ["--extractor-args", "youtube:test"])
+        captured = {}
+
+        def fake_run(command, **kwargs):
+            captured["command"] = command
+            return FakeCompletedProcess(returncode=0, stdout=json.dumps({"title": "t"}))
+
+        monkeypatch.setattr(vi.subprocess, "run", fake_run)
+        video.extract("https://www.youtube.com/watch?v=abc")
+        assert "youtube:test" in captured["command"]
 
     def test_non_youtube_command_excludes_youtube_specific_args(self, video, monkeypatch):
         captured = {}
@@ -104,7 +116,7 @@ class TestExtract:
         cmd = captured["command"]
         assert cmd[0] == "/fake/yt-dlp"
         assert "--js-runtimes" in cmd
-        assert "/fake/node" in cmd
+        assert "node:/fake/node" in cmd
         assert "--no-playlist" in cmd
         assert "--skip-download" in cmd
         assert "-j" in cmd
@@ -272,23 +284,105 @@ class TestFormatResponse:
         abrs = [f["abr"] for f in result["audio_formats"]]
         assert abrs == [64, 128, 192]
 
-    def test_deduplicates_video_formats_by_height_and_ext(self):
-        # dois formatos 720p/mp4: o último (maior filesize) deve prevalecer
-        # já que o algoritmo itera de trás pra frente e mantém o primeiro visto
+    def test_one_entry_per_resolution(self):
         info = {
             "formats": [
                 {"vcodec": "avc1", "acodec": "none", "height": 720, "ext": "mp4",
-                 "format_id": "v720_a", "filesize": 1000},
-                {"vcodec": "avc1", "acodec": "none", "height": 720, "ext": "mp4",
-                 "format_id": "v720_b", "filesize": 2000},
+                 "format_id": "v720_a", "tbr": 1000},
+                {"vcodec": "vp9", "acodec": "none", "height": 720, "ext": "webm",
+                 "format_id": "v720_b", "tbr": 2000},
             ]
         }
         result = VideoInfo()._format_response(info)
         assert len(result["formats"]) == 1
-        # como a lista é ordenada (estável) por height antes da dedup, e ambos têm
-        # a mesma altura, a ordem original é preservada; a dedup mantém o ÚLTIMO
-        # elemento da lista ordenada (percorrida de trás para frente).
-        assert result["formats"][0]["format_id"] == "v720_b"
+
+    def test_prefers_h264_on_same_resolution(self):
+        # same choice of yt-dlp with "-S res,vcodec:h264": the size shown is real
+        info = {
+            "formats": [
+                {"vcodec": "vp09.00.40.08", "acodec": "none", "height": 1080, "ext": "mp4",
+                 "format_id": "303", "filesize": 100},
+                {"vcodec": "avc1.64002a", "acodec": "none", "height": 1080, "ext": "mp4",
+                 "format_id": "299", "filesize": 200},
+                {"vcodec": "av01.0.09M.08", "acodec": "none", "height": 1080, "ext": "mp4",
+                 "format_id": "399", "filesize": 50},
+            ]
+        }
+        f = VideoInfo()._format_response(info)["formats"][0]
+        assert f["format_id"] == "299"
+        assert f["h264"] is True
+
+    def test_h264_false_when_resolution_has_no_h264(self):
+        info = {"formats": [
+            {"vcodec": "vp9", "acodec": "none", "height": 2160, "ext": "webm", "format_id": "315"},
+        ]}
+        assert VideoInfo()._format_response(info)["formats"][0]["h264"] is False
+
+    def test_h264_none_when_codec_unknown(self):
+        # some sites don't inform the codec: can't know before the download
+        info = {"formats": [{"height": 720, "ext": "mp4", "format_id": "hd"}]}
+        assert VideoInfo()._format_response(info)["formats"][0]["h264"] is None
+
+    def test_size_includes_best_aac_audio(self):
+        info = {"formats": [
+            {"vcodec": "avc1", "acodec": "none", "height": 1080, "ext": "mp4",
+             "format_id": "299", "filesize": 1000},
+            {"vcodec": "none", "acodec": "opus", "ext": "webm", "abr": 130,
+             "format_id": "251", "filesize": 70},
+            {"vcodec": "none", "acodec": "mp4a.40.2", "ext": "m4a", "abr": 129,
+             "format_id": "140", "filesize": 50},
+        ]}
+        f = VideoInfo()._format_response(info)["formats"][0]
+        assert f["audio_format_id"] == "140"
+        assert f["filesize"] == 1050
+
+    def test_size_without_audio_when_video_already_has_audio(self):
+        info = {"formats": [
+            {"vcodec": "avc1", "acodec": "mp4a", "height": 360, "ext": "mp4",
+             "format_id": "18", "filesize": 500},
+            {"vcodec": "none", "acodec": "mp4a", "ext": "m4a", "abr": 129,
+             "format_id": "140", "filesize": 50},
+        ]}
+        f = VideoInfo()._format_response(info)["formats"][0]
+        assert f["audio_format_id"] is None
+        assert f["filesize"] == 500
+
+    def test_size_none_when_audio_size_unknown(self):
+        info = {"formats": [
+            {"vcodec": "avc1", "acodec": "none", "height": 720, "ext": "mp4",
+             "format_id": "v", "filesize": 500},
+            {"vcodec": "none", "acodec": "mp4a", "ext": "m4a", "format_id": "a"},
+        ]}
+        assert VideoInfo()._format_response(info)["formats"][0]["filesize"] is None
+
+    def test_size_estimated_by_bitrate_and_duration(self):
+        info = {"duration": 100, "formats": [
+            {"vcodec": "avc1", "acodec": "none", "height": 720, "ext": "mp4",
+             "format_id": "v", "tbr": 800},
+        ]}
+        # 800 kbit/s * 100 s = 10_000_000 bytes
+        assert VideoInfo()._format_response(info)["formats"][0]["filesize"] == 10_000_000
+
+    def test_direct_formats_preferred_over_hls(self):
+        info = {"formats": [
+            {"vcodec": "avc1", "acodec": "none", "height": 720, "ext": "mp4",
+             "format_id": "hls", "protocol": "m3u8_native", "tbr": 9000},
+            {"vcodec": "avc1", "acodec": "none", "height": 720, "ext": "mp4",
+             "format_id": "https", "protocol": "https", "tbr": 1000},
+        ]}
+        assert VideoInfo()._format_response(info)["formats"][0]["format_id"] == "https"
+
+    def test_none_bitrate_and_height_do_not_crash(self):
+        # regression: HLS audio formats come with "abr": None (TypeError on sort)
+        info = {"formats": [
+            {"vcodec": "none", "acodec": "mp4a", "ext": "mp4", "abr": None, "format_id": "233"},
+            {"vcodec": "none", "acodec": "mp4a", "ext": "mp4", "abr": None, "format_id": "234"},
+            {"vcodec": "avc1", "acodec": "none", "height": None, "ext": "mp4", "format_id": "x"},
+            {"vcodec": "avc1", "acodec": "none", "height": 360, "ext": "mp4",
+             "format_id": "134", "fps": None, "tbr": None},
+        ]}
+        result = VideoInfo()._format_response(info)
+        assert [f["height"] for f in result["formats"]] == [360]
 
     def test_deduplicates_audio_formats_by_ext_and_abr(self):
         info = {
@@ -588,109 +682,113 @@ class TestExtractPlaylist:
 
 
 # ---------------------------------------------------------------------------
-# pick_preview_url
+# PreviewDownloader (trimmer preview, local file with sound)
 # ---------------------------------------------------------------------------
 
-class TestPickPreviewUrl:
+class FakePopen:
+    def __init__(self, returncode=0, on_wait=None):
+        self.returncode = returncode
+        self.pid = 1234
+        self._on_wait = on_wait
+        self.killed = False
 
-    def test_none_info_returns_none(self):
-        assert pick_preview_url(None) is None
+    def wait(self, timeout=None):
+        if self._on_wait:
+            self._on_wait()
+        return self.returncode
 
-    def test_empty_dict_returns_none(self):
-        assert pick_preview_url({}) is None
+    def poll(self):
+        return None
 
-    def test_no_formats_returns_none(self):
-        assert pick_preview_url({"raw_formats": [], "formats": []}) is None
+    def kill(self):
+        self.killed = True
 
-    def test_filters_out_formats_without_video_codec(self):
-        info = {"raw_formats": [
-            {"vcodec": "none", "acodec": "mp4a", "url": "http://a", "ext": "mp4", "height": 360},
-        ]}
-        assert pick_preview_url(info) is None
 
-    def test_filters_out_formats_without_audio_codec(self):
-        info = {"raw_formats": [
-            {"vcodec": "avc1", "acodec": "none", "url": "http://a", "ext": "mp4", "height": 360},
-        ]}
-        assert pick_preview_url(info) is None
+@pytest.fixture
+def preview_env(monkeypatch):
+    monkeypatch.setattr(vi, "get_ytdlp_path", lambda: "/fake/yt-dlp")
+    monkeypatch.setattr(vi, "get_node_path", lambda: "/fake/node")
+    monkeypatch.setattr(vi, "get_ffmpeg_path", lambda: "/fake/ffmpeg")
+    monkeypatch.setattr(vi, "get_cookies_path", lambda: "/fake/data/cookies.txt")
+    monkeypatch.setattr(vi, "cookies_exists", lambda: True)
+    monkeypatch.setattr(vi.sys, "platform", "linux")
 
-    def test_filters_out_formats_without_url(self):
-        info = {"raw_formats": [
-            {"vcodec": "avc1", "acodec": "mp4a", "url": None, "ext": "mp4", "height": 360},
-        ]}
-        assert pick_preview_url(info) is None
 
-    def test_ignores_non_dict_entries(self):
-        info = {"raw_formats": [
-            "not-a-dict",
-            123,
-            None,
-            {"vcodec": "avc1", "acodec": "mp4a", "url": "http://good", "ext": "mp4",
-             "height": 360, "protocol": "https"},
-        ]}
-        assert pick_preview_url(info) == "http://good"
+class TestPreviewDownloader:
 
-    def test_prefers_raw_formats_over_formats(self):
-        info = {
-            "raw_formats": [
-                {"vcodec": "avc1", "acodec": "mp4a", "url": "http://raw", "ext": "mp4",
-                 "height": 360, "protocol": "https"},
-            ],
-            "formats": [
-                {"vcodec": "avc1", "acodec": "mp4a", "url": "http://formats", "ext": "mp4",
-                 "height": 360, "protocol": "https"},
-            ],
-        }
-        assert pick_preview_url(info) == "http://raw"
+    def _run(self, monkeypatch, tmp_path, url="https://vimeo.com/1", returncode=0, create=".mp4"):
+        captured = {}
 
-    def test_falls_back_to_formats_when_raw_formats_missing(self):
-        info = {
-            "formats": [
-                {"vcodec": "avc1", "acodec": "mp4a", "url": "http://formats", "ext": "mp4",
-                 "height": 360, "protocol": "https"},
-            ],
-        }
-        assert pick_preview_url(info) == "http://formats"
+        def fake_popen(cmd, **kwargs):
+            captured["cmd"] = cmd
+            captured["kwargs"] = kwargs
 
-    def test_prefers_non_hls_over_hls(self):
-        info = {"raw_formats": [
-            {"vcodec": "avc1", "acodec": "mp4a", "url": "http://hls", "ext": "mp4",
-             "height": 360, "protocol": "m3u8_native"},
-            {"vcodec": "avc1", "acodec": "mp4a", "url": "http://https_stream", "ext": "mp4",
-             "height": 360, "protocol": "https"},
-        ]}
-        assert pick_preview_url(info) == "http://https_stream"
+            def on_wait():
+                if create:
+                    (tmp_path / f"preview_x{create}").write_text("data")
+            return FakePopen(returncode=returncode, on_wait=on_wait)
 
-    def test_prefers_mp4_over_other_ext_when_non_hls(self):
-        info = {"raw_formats": [
-            {"vcodec": "avc1", "acodec": "mp4a", "url": "http://webm", "ext": "webm",
-             "height": 360, "protocol": "https"},
-            {"vcodec": "avc1", "acodec": "mp4a", "url": "http://mp4", "ext": "mp4",
-             "height": 360, "protocol": "https"},
-        ]}
-        assert pick_preview_url(info) == "http://mp4"
+        monkeypatch.setattr(vi.subprocess, "Popen", fake_popen)
+        result = PreviewDownloader().download(url, str(tmp_path), "preview_x")
+        return result, captured
 
-    def test_prefers_smaller_height_among_ties(self):
-        info = {"raw_formats": [
-            {"vcodec": "avc1", "acodec": "mp4a", "url": "http://big", "ext": "mp4",
-             "height": 1080, "protocol": "https"},
-            {"vcodec": "avc1", "acodec": "mp4a", "url": "http://small", "ext": "mp4",
-             "height": 240, "protocol": "https"},
-        ]}
-        assert pick_preview_url(info) == "http://small"
+    def test_command_downloads_small_file_with_sound(self, preview_env, monkeypatch, tmp_path):
+        _, captured = self._run(monkeypatch, tmp_path)
+        cmd = captured["cmd"]
+        assert cmd[0] == "/fake/yt-dlp"
+        assert cmd[cmd.index("-f") + 1] == "bv*+ba/b"
+        assert cmd[cmd.index("-S") + 1] == "res:240,vcodec:h264,acodec:aac,+br"
+        assert "--no-playlist" in cmd
+        assert "--cookies" in cmd
 
-    def test_missing_height_treated_as_large_and_deprioritized(self):
-        info = {"raw_formats": [
-            {"vcodec": "avc1", "acodec": "mp4a", "url": "http://no_height", "ext": "mp4",
-             "protocol": "https"},  # sem height -> tratado como 9999
-            {"vcodec": "avc1", "acodec": "mp4a", "url": "http://has_height", "ext": "mp4",
-             "height": 480, "protocol": "https"},
-        ]}
-        assert pick_preview_url(info) == "http://has_height"
+    def test_output_does_not_block_on_pipes(self, preview_env, monkeypatch, tmp_path):
+        _, captured = self._run(monkeypatch, tmp_path)
+        assert captured["kwargs"]["stdout"] == vi.subprocess.DEVNULL
+        assert captured["kwargs"]["stderr"] == vi.subprocess.DEVNULL
 
-    def test_missing_protocol_treated_as_non_hls(self):
-        info = {"raw_formats": [
-            {"vcodec": "avc1", "acodec": "mp4a", "url": "http://no_protocol", "ext": "mp4",
-             "height": 360},
-        ]}
-        assert pick_preview_url(info) == "http://no_protocol"
+    def test_returns_downloaded_file(self, preview_env, monkeypatch, tmp_path):
+        result, _ = self._run(monkeypatch, tmp_path)
+        assert result == str(tmp_path / "preview_x.mp4")
+
+    def test_any_extension_is_accepted(self, preview_env, monkeypatch, tmp_path):
+        # archive.org delivers a single .ogv - QMediaPlayer plays it
+        result, _ = self._run(monkeypatch, tmp_path, create=".ogv")
+        assert result == str(tmp_path / "preview_x.ogv")
+
+    def test_failure_returns_none_and_cleans(self, preview_env, monkeypatch, tmp_path):
+        result, _ = self._run(monkeypatch, tmp_path, returncode=1)
+        assert result is None
+        assert list(tmp_path.iterdir()) == []
+
+    def test_no_file_returns_none(self, preview_env, monkeypatch, tmp_path):
+        result, _ = self._run(monkeypatch, tmp_path, create=None)
+        assert result is None
+
+    def test_client_settings_only_for_youtube(self, preview_env, monkeypatch, tmp_path):
+        monkeypatch.setattr(vi, "YOUTUBE_CLIENT_SETTINGS", ["--extractor-args", "youtube:test"])
+        _, captured = self._run(monkeypatch, tmp_path, url="https://vimeo.com/1")
+        assert "--extractor-args" not in captured["cmd"]
+        _, captured = self._run(monkeypatch, tmp_path, url="https://www.youtube.com/watch?v=a")
+        assert "--extractor-args" in captured["cmd"]
+
+    def test_cancel_kills_process_and_returns_none(self, preview_env, monkeypatch, tmp_path):
+        downloader = PreviewDownloader()
+        procs = []
+
+        def fake_popen(cmd, **kwargs):
+            def on_wait():
+                (tmp_path / "preview_x.mp4").write_text("data")
+                downloader.cancel()
+            procs.append(FakePopen(on_wait=on_wait))
+            return procs[-1]
+
+        monkeypatch.setattr(vi.subprocess, "Popen", fake_popen)
+        assert downloader.download("https://vimeo.com/1", str(tmp_path), "preview_x") is None
+        assert procs[0].killed is True
+        assert list(tmp_path.iterdir()) == []
+
+    def test_error_building_command_returns_none(self, preview_env, monkeypatch, tmp_path):
+        def raise_error():
+            raise Exception("Node.js não encontrado")
+        monkeypatch.setattr(vi, "get_node_path", raise_error)
+        assert PreviewDownloader().download("https://vimeo.com/1", str(tmp_path), "preview_x") is None

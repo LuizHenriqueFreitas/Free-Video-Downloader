@@ -57,9 +57,9 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import QTimer, QThread, QObject, Signal, Slot
 
-from core.video_info import VideoInfo, pick_preview_url
+from core.video_info import VideoInfo, PreviewDownloader
 from core.utils import (
-    resource_path, cookies_exists, looks_like_url, is_youtube,
+    resource_path, cookies_exists, looks_like_url,
     is_youtube_playlist,
     file_conflict, resolve_unique_title, expected_output_path,
     safe_filename, invalid_filename_chars, is_valid_filename, get_temp_dir
@@ -144,6 +144,46 @@ class VideoInfoWorker(QObject):
             self.error.emit(str(e), self.request_id)
 
 
+""" ===========================
+    PREVIEW WORKER (trimmer tool)
+
+    Probably is a good idea move that to a own separete file
+  ========================== """
+# downloads a small preview file (video + sound) with yt-dlp on background
+class PreviewLoadWorker(QObject):
+    # local path (None if it fails), request_id
+    finished = Signal(object, str)
+
+    def __init__(self, url, out_dir, name, request_id):
+        super().__init__()
+        self.url = url
+        self.out_dir = out_dir
+        self.name = name
+        self.request_id = request_id
+        self.downloader = PreviewDownloader()
+
+    def run(self):
+        path = self.downloader.download(self.url, self.out_dir, self.name)
+        self.finished.emit(path, self.request_id)
+
+    # called from the UI thread: kills the yt-dlp process
+    def cancel(self):
+        self.downloader.cancel()
+
+
+# remove a file some seconds later: the player may still have it open
+# (on Windows an open file can't be deleted). If it still fails, the temp
+# folder is wiped on next app start (clear_temp_dir).
+def _remove_later(path, delay_ms=1500):
+    def _remove():
+        try:
+            if path and os.path.exists(path):
+                os.remove(path)
+        except OSError:
+            pass
+    QTimer.singleShot(delay_ms, _remove)
+
+
 """ ==========================
     DOWNLOAD DIAGLOG CLASS
 
@@ -171,6 +211,15 @@ class DownloadDialog(QDialog):
         self._worker = None
         self._current_thumb_path = None
         self._loading_url = None
+
+        # trimmer preview file (downloaded on background, see PreviewLoadWorker)
+        self._preview_worker = None
+        self._preview_request_id = None
+        self._preview_path = None
+        self._preview_url = None
+
+        # conversion warning already shown on this dialog (see _show_conversion_warning)
+        self._conversion_warning_shown = False
 
         # debounce
         self.load_timer = QTimer()
@@ -234,6 +283,9 @@ class DownloadDialog(QDialog):
         format_layout.addWidget(QLabel("Qualidade:"))
         self.quality_selector = QComboBox()
         self.quality_selector.setEnabled(False)
+        # "activated" is emitted only by user action (mouse/keyboard), not when
+        # the list is filled by code - so the warning never pops up by itself
+        self.quality_selector.activated.connect(self._on_quality_activated)
         format_layout.addWidget(self.quality_selector)
         layout.addLayout(format_layout)
 
@@ -297,11 +349,9 @@ class DownloadDialog(QDialog):
 
     # run when user change the media format extension to download - between .mp4 and .mp3
     def _on_format_changed(self, value):
-        # if mp4 selected show available resolutions to download
-        if value.upper() == "MP4":
-            self.quality_selector.setEnabled(True)
-            if self.video_info:
-                self._populate_quality_selector()
+        # mp4: available resolutions to download / mp3: estimated size
+        if self.video_info:
+            self._populate_quality_selector()
         else:
             self.quality_selector.clear()
             self.quality_selector.setEnabled(False)
@@ -427,8 +477,17 @@ class DownloadDialog(QDialog):
                 self.status_label.setText("Cancelado pelo usuário")
                 return
             elif choice == "playlist":
-                # load entier playlist
-                self._start_playlist_worker(playlist_url, str(uuid4()))
+                # same preparation of the normal pipeline below: abandon old request
+                # and register this one as the current, otherwise _on_playlist_loaded()
+                # discards the result (request_id != _current_request_id)
+                self._abandon_thread()
+                self._reset_video_state()
+                request_id = str(uuid4())
+                self._current_request_id = request_id
+                self._loading_url = playlist_url
+                # that will need to be translated at location update
+                self.status_label.setText("Carregando playlist...")
+                self._start_playlist_worker(playlist_url, request_id)
                 return
             # choice == "single": continues to just one video normal download
 
@@ -448,7 +507,9 @@ class DownloadDialog(QDialog):
             Because is that starting and setting a thread - i don't know enough about threading
             right now, but i suspect of that be exists here.
         """
-        if is_youtube_playlist(url):
+        # only bare playlist links (".../playlist?list=...") - links with a video id
+        # (v=) were already handled by _ask_single_or_playlist() above
+        if is_youtube_playlist(url) and not self._has_video_id(url):
             # that will need to be translated at location update
             self.status_label.setText("Carregando playlist...")
             self._start_playlist_worker(url, request_id)
@@ -507,6 +568,8 @@ class DownloadDialog(QDialog):
     def _reset_video_state(self):
         self.video_info = None
         self._destroy_trimmer()
+        # the preview belongs to the previous link
+        self._cancel_preview()
         self.advanced_check.hide()
         self._update_mode_visibility()
 
@@ -533,12 +596,13 @@ class DownloadDialog(QDialog):
 
         self._populate_quality_selector()
 
-        """ The advanced mode only is showed when is warranted a real time video preview
-            so, that function is only availabe to youtube links, we choice that aproach 
-            because made the application a lot more solid and simple to implement.
+        """ The advanced mode (trimmer) is available to any site yt-dlp can download,
+            as long as the media duration is known (the cut bar needs it).
+            The preview is loaded later (see _start_preview_worker) and, if it fails,
+            the trimmer still works with thumbnail + cut bar.
         """
-        can_preview = is_youtube(self._loading_url) and bool(pick_preview_url(info))
-        if can_preview:
+        can_trim = bool(info.get("duration"))
+        if can_trim:
             self.advanced_check.show()
             if self.advanced_check.isChecked():
                 self._build_trimmer()
@@ -614,10 +678,61 @@ class DownloadDialog(QDialog):
         self.trimmer = ClipTrimmer(duration, self._current_thumb_path)
         self.trimmer_container.addWidget(self.trimmer)
 
-        preview_url = pick_preview_url(self.video_info)
-        self.trimmer.load_preview(preview_url)
+        # preview already downloaded for this link: reuse it
+        if self._preview_path and self._preview_url == self._loading_url:
+            self.trimmer.load_preview(self._preview_path)
+        # not downloading yet: start (if it's downloading, it loads when finished)
+        elif self._preview_worker is None:
+            self._start_preview_worker()
 
         self._update_mode_visibility()
+
+    # download the trimmer preview on background (same thread pattern of the other workers)
+    def _start_preview_worker(self):
+        request_id = str(uuid4())
+        self._preview_request_id = request_id
+        self._preview_url = self._loading_url
+
+        thread = QThread()
+        worker = PreviewLoadWorker(self._loading_url, get_temp_dir(),
+                                   f"preview_{request_id}", request_id)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.finished.connect(self._on_preview_loaded)
+        worker.finished.connect(lambda *_: thread.quit())
+        thread.finished.connect(thread.deleteLater)
+        # the worker object must live until the thread ends
+        thread.finished.connect(worker.deleteLater)
+
+        self._preview_worker = worker
+        _keep_thread(thread)
+        thread.start()
+
+    # preview download finished (path is None if it failed)
+    @Slot(object, str)
+    def _on_preview_loaded(self, path, request_id):
+        # old request (other link / dialog closing): just remove the file
+        if request_id != self._preview_request_id:
+            _remove_later(path, 0)
+            return
+        self._preview_worker = None
+        self._preview_path = path
+        if self.trimmer:
+            self.trimmer.load_preview(path)
+
+    # stop the preview download (if running) and remove the preview file
+    def _cancel_preview(self):
+        self._preview_request_id = None
+        if self._preview_worker is not None:
+            try:
+                self._preview_worker.cancel()
+            except Exception:
+                pass
+            self._preview_worker = None
+        if self._preview_path:
+            _remove_later(self._preview_path)
+        self._preview_path = None
+        self._preview_url = None
 
     # delete and clean trimm tool from UI
     def _destroy_trimmer(self):
@@ -634,51 +749,116 @@ class DownloadDialog(QDialog):
     """ ================================
         VIDEO QUALITY - WITH FILE SIZE
       ================================ """
-    # insert quality informations to quality UI selector
+    # file size to friendly text (sizes are estimates, so "~")
+    # that will need to be translated at location update
+    @staticmethod
+    def _format_size(size_bytes):
+        if not size_bytes:
+            return "tamanho desconhecido"
+        size_mb = size_bytes / (1024 * 1024)
+        if size_mb >= 1024:
+            return f"~{size_mb/1024:.1f} GB"
+        return f"~{size_mb:.1f} MB"
+
+    """ Insert quality informations to quality UI selector.
+        MP4: one line per resolution with the real download size (video + audio,
+        see VideoInfo._format_response). Resolutions without H.264 on the site
+        get "necessário conversão" (the file is converted after the download).
+        MP3: one disabled line with the estimated size (always 192 kbps).
+        Each item data: {"quality_id", "filesize", "label", "needs_conversion"}
+    """
     def _populate_quality_selector(self):
         if not self.video_info:
             return
 
-        formats = self.video_info.get("formats", [])
-        video_formats = [
-            f for f in formats
-            if f.get("height") and f.get("vcodec") != "none"
-        ]
-
-        unique_heights = {}
-        for f in video_formats:
-            height = f.get("height")
-            if height not in unique_heights:
-                unique_heights[height] = f
-            else:
-                if f.get("tbr", 0) > unique_heights[height].get("tbr", 0):
-                    unique_heights[height] = f
-
-        sorted_heights = sorted(unique_heights.keys(), reverse=True)
-
         self.quality_selector.clear()
-        for height in sorted_heights:
-            f = unique_heights[height]
-            label = f"{height}p"
-            filesize = f.get("filesize") or f.get("filesize_approx")
-            # calculate storage size
-            if filesize:
-                size_mb = filesize / (1024 * 1024)
-                if size_mb >= 1024:
-                    label += f" ({size_mb/1024:.1f} GB)"
-                else:
-                    label += f" ({size_mb:.1f} MB)"
-            else:
+        self._conversion_warning_shown = False
+
+        # MP3: nothing to choose, just show the space needed
+        if self.format_selector.currentText().upper() == "MP3":
+            duration = self.video_info.get("duration") or 0
+            filesize = int(duration * 192000 / 8) if duration else None
+            label = "MP3 192 kbps"
+            self.quality_selector.addItem(
+                f"{label} ({self._format_size(filesize)})",
+                {"quality_id": None, "filesize": filesize, "label": label, "needs_conversion": False},
+            )
+            self.quality_selector.setEnabled(False)
+            return
+
+        formats = sorted(self.video_info.get("formats", []),
+                         key=lambda f: f.get("height") or 0, reverse=True)
+
+        default_index = None
+        for f in formats:
+            height = f.get("height")
+            short_label = f"{height}p"
+            label = f"{short_label} ({self._format_size(f.get('filesize'))})"
+            # h264 False = conversion needed / None = unknown codec (no tag)
+            needs_conversion = f.get("h264") is False
+            if needs_conversion:
                 # that will need to be translated at location update
-                label += " (tamanho desconhecido)"
+                label += " — necessário conversão"
 
             quality_id = f"bestvideo[height<={height}]+bestaudio/best[height<={height}]"
-            self.quality_selector.addItem(label, (quality_id, filesize))
+            self.quality_selector.addItem(label, {
+                "quality_id": quality_id,
+                "filesize": f.get("filesize"),
+                "label": short_label,
+                "needs_conversion": needs_conversion,
+            })
 
-        self.quality_selector.setEnabled(len(sorted_heights) > 0)
-        if not sorted_heights:
+            # default = the highest quality that doesn't need conversion,
+            # otherwise every 4K video would be slow without user choice
+            if default_index is None and not needs_conversion:
+                default_index = self.quality_selector.count() - 1
+
+        self.quality_selector.setEnabled(len(formats) > 0)
+        if not formats:
             # that will need to be translated at location update
-            self.quality_selector.addItem("Nenhum formato disponível", (None, None))
+            self.quality_selector.addItem("Nenhum formato disponível", None)
+            return
+        self.quality_selector.setCurrentIndex(default_index if default_index is not None else 0)
+
+    # user chose a quality on selector
+    def _on_quality_activated(self, index):
+        data = self.quality_selector.itemData(index)
+        if isinstance(data, dict) and data.get("needs_conversion"):
+            self._show_conversion_warning()
+
+    """ Explain that this quality takes more time: the site doesn't offer it
+        on H.264 (the format video editors accept), so it will be converted
+        on the user computer after the download.
+        Same pattern of the other warnings (checkbox "don't show again").
+    """
+    def _show_conversion_warning(self):
+        self._conversion_warning_shown = True
+        if self.settings.get_skip_conversion_warning():
+            return
+
+        box = QMessageBox(self)
+        # that will need to be translated at location update
+        box.setWindowTitle("Esta qualidade precisa de conversão")
+        box.setIcon(QMessageBox.Information)
+        # that will need to be translated at location update
+        box.setText(
+            "O site não oferece essa resolução no formato aceito pelos editores "
+            "de vídeo (Premiere, Vegas, CapCut e outros).\n\n"
+            "Depois do download, o Get Media Free vai converter o vídeo no seu "
+            "computador para que ele possa ser usado na edição. Isso pode levar "
+            "bastante tempo, às vezes mais do que a duração do próprio vídeo, "
+            "dependendo do seu computador.\n\n"
+            "O progresso e o tempo restante aparecem no card do download."
+        )
+        # that will need to be translated at location update
+        dont_show = QCheckBox("Não mostrar esta mensagem novamente")
+        box.setCheckBox(dont_show)
+        # that will need to be translated at location update
+        box.addButton("Fechar", QMessageBox.AcceptRole)
+        box.exec()
+
+        if dont_show.isChecked():
+            self.settings.set_skip_conversion_warning(True)
 
 
     """ =====================
@@ -724,15 +904,28 @@ class DownloadDialog(QDialog):
 
         selected_quality_id = None
         selected_filesize = None
-        if fmt.upper() == "MP4":
-            data = self.quality_selector.currentData()
-            if data and isinstance(data, tuple):
-                selected_quality_id, selected_filesize = data
+        # short quality label for the history card (without the size text)
+        quality_label = self.quality_selector.currentText()
+        data = self.quality_selector.currentData()
+        if isinstance(data, dict):
+            selected_quality_id = data.get("quality_id") if fmt.upper() == "MP4" else None
+            selected_filesize = data.get("filesize")
+            quality_label = data.get("label") or quality_label
+            # quality selected by default that needs conversion (all of them need):
+            # the user must know before the download starts
+            if data.get("needs_conversion") and not self._conversion_warning_shown:
+                self._show_conversion_warning()
 
         # advanced mode
         clip_start, clip_end = (None, None)
         if self.advanced_check.isChecked() and self.trimmer:
             clip_start, clip_end = self.trimmer.get_clip()
+            # start and end markers at same point = empty clip
+            if clip_start is not None and clip_end is not None and clip_end - clip_start < 1:
+                # that will need to be translated at location update
+                QMessageBox.warning(self, "Trecho inválido",
+                                    "O trecho selecionado precisa ter pelo menos 1 segundo.")
+                return
 
         # that will need to be translated at location update
         original_title = self.video_info.get("title", "Sem título")
@@ -777,7 +970,7 @@ class DownloadDialog(QDialog):
             title=final_title,
             original_title=original_title,
             format_type=fmt,
-            quality=self.quality_selector.currentText(),
+            quality=quality_label,
             quality_id=selected_quality_id,
             thumbnail=self._current_thumb_path,
             status="pending",
@@ -834,6 +1027,8 @@ class DownloadDialog(QDialog):
         """
         self._destroy_trimmer()
         self._current_request_id = None
+        # stop preview download (if running) and remove the preview file
+        self._cancel_preview()
         """ Clean up the thumbnail only if the dialog is being cancelled/closed
             without a confirmed download (result == Accepted keeps the file,
             since DownloadItem.thumbnail still points to it for the history card)

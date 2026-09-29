@@ -13,6 +13,7 @@ import re
 import stat
 import shutil
 import subprocess
+import threading
 
 """==========================
    Plataform filters
@@ -32,12 +33,16 @@ _PLATFORM_DOMAINS = {
     # if you want to add more lonk normalizations put their here
 }
 
-""" "youtube:player_client=" is the getter what ytdlp access youtube data;
-    We are using "web_safari" and fallback "android_vr" because are the best quality ones
-    for ower cookies browseless pipeline.
+""" "youtube:player_client=" choose witch youtube client yt-dlp uses to get data.
+    It's empty on purpose: forcing "web_safari,android_vr" started to return
+    HTTP 403 (android_vr now requires a PO Token). yt-dlp's default clients
+    are kept up to date by yt-dlp itself (and updater.py keeps yt-dlp updated),
+    so letting yt-dlp choose is more durable.
+    If some day it's necessary to force a client again, put it back here like:
+    ["--extractor-args", "youtube:player_client=<client>"]
 """
 # this constant will be used to extract UI info and to get the download process
-YOUTUBE_CLIENT_SETTINGS = ["--extractor-args", "youtube:player_client=web_safari,android_vr"]
+YOUTUBE_CLIENT_SETTINGS = []
 
 
 """ ============================
@@ -84,7 +89,7 @@ def is_youtube_playlist(url: str) -> bool:
 # Windows file name blocked characters
 INVALID_FILENAME_CHARS = '\\/:*?"<>|'
 
-# searche for blocked characters at the file name
+# search for blocked characters at the file name
 def invalid_filename_chars(name: str):
     """Return a ordened list of blocked caracters at the file name."""
     if not name:
@@ -126,15 +131,18 @@ def file_conflict(folder: str, title: str, format_type: str) -> bool:
 
 """ Return a alternative title different of other arquives.
     Ex.: 'video' -> 'video (1)' -> 'video (2)' ...
+    "reserved" (optional): names already taken but not on disk yet
+    (ex.: other videos of the same playlist that will be downloaded)
 """
-def resolve_unique_title(folder: str, title: str, format_type: str) -> str:
+def resolve_unique_title(folder: str, title: str, format_type: str, reserved=None) -> str:
+    reserved = reserved or set()
     base = safe_filename(title)
-    if not file_conflict(folder, base, format_type):
+    if base not in reserved and not file_conflict(folder, base, format_type):
         return base
     i = 1
     while True:
         candidate = f"{base} ({i})"
-        if not file_conflict(folder, candidate, format_type):
+        if candidate not in reserved and not file_conflict(folder, candidate, format_type):
             return candidate
         i += 1
 
@@ -282,7 +290,21 @@ def get_ytdlp_path():
 #Logic explained above
 def get_ffmpeg_path():
     if sys.platform == "win32":
-        return resource_path("tools/ffmpeg/bin/")
+        # embedded ffmpeg first (bundled with the .exe or at src/tools/ at dev mode)
+        bin_dir = resource_path("tools/ffmpeg/bin/")
+        if os.path.isfile(os.path.join(bin_dir, "ffmpeg.exe")):
+            return bin_dir
+        # fallback: ffmpeg installed on the system PATH
+        ffmpeg = shutil.which("ffmpeg")
+        if ffmpeg:
+            return ffmpeg
+        # without ffmpeg yt-dlp doesn't merge video + audio (you get 2 files),
+        # so it's better stop here with a clear message
+        # that need to be translated with location update
+        raise Exception(
+            f"FFmpeg não encontrado em: {bin_dir}\n"
+            "Verifique se ffmpeg.exe e ffprobe.exe estão em: src/tools/ffmpeg/bin/"
+        )
     else:
         ffmpeg = shutil.which('ffmpeg')
         if ffmpeg:
@@ -370,8 +392,8 @@ def cookies_exists():
     return os.path.exists(get_cookies_path())
 
 # Set permissions to cookie.txt file (Unix: 600, Windows: readonly).
-# that is a low level secury implementation, because you will have
-# the same file on your downloads if doesn't delete.
+# that is a low level security implementation, because you will have
+# the same file on your downloads if it doesn't delete.
 def secure_cookies_file(path: str):
     if not os.path.exists(path):
         return
@@ -398,11 +420,98 @@ def save_cookies(content: bytes):
 
 # Return the complete path to ffmpeg executable.
 def get_ffmpeg_exe():
-    import sys as _sys
-    bin_dir = get_ffmpeg_path()
-    exe = "ffmpeg.exe" if _sys.platform == "win32" else "ffmpeg"
-    full = os.path.join(bin_dir, exe)
+    bin_path = get_ffmpeg_path()
+    # get_ffmpeg_path() can return the executable itself (Linux / system PATH)
+    if os.path.isfile(bin_path):
+        return bin_path
+    # or the folder where it is (embedded on Windows)
+    exe = "ffmpeg.exe" if sys.platform == "win32" else "ffmpeg"
+    full = os.path.join(bin_path, exe)
     if os.path.exists(full):
         return full
     # fallback for ffmpeg of PATH
     return exe
+
+# Return the complete path to ffprobe executable (reads codecs and duration).
+# It always stays together ffmpeg (same folder), else is searched on PATH.
+def get_ffprobe_exe():
+    exe = "ffprobe.exe" if sys.platform == "win32" else "ffprobe"
+    folder = os.path.dirname(get_ffmpeg_exe())
+    if folder:
+        full = os.path.join(folder, exe)
+        if os.path.isfile(full):
+            return full
+    ffprobe = shutil.which("ffprobe")
+    if ffprobe:
+        return ffprobe
+    # that need to be translated with location update
+    raise Exception("FFprobe não encontrado. Ele deve ficar junto do ffmpeg.")
+
+
+""" ==========================
+    VIDEO ENCODER (GPU or CPU)
+   ========================== """
+
+""" H.264 encoders to try, in order: GPU first (NVIDIA, Intel, AMD), CPU last.
+    Each one has the ffmpeg arguments that give a quality close to
+    libx264 "-crf 18" (visually almost lossless).
+    "-pix_fmt": always 8-bit 4:2:0 - the only H.264 variant every editor opens
+    (10-bit sources, like 4K HDR on youtube, would become "High 10" profile).
+    h264_qsv only accepts nv12 as input, the others accept yuv420p.
+"""
+H264_ENCODERS = [
+    ("h264_nvenc", ["-c:v", "h264_nvenc", "-preset", "p5", "-rc", "vbr",
+                    "-cq", "19", "-b:v", "0", "-pix_fmt", "yuv420p"]),
+    ("h264_qsv",   ["-c:v", "h264_qsv", "-preset", "medium",
+                    "-global_quality", "20", "-pix_fmt", "nv12"]),
+    ("h264_amf",   ["-c:v", "h264_amf", "-quality", "balanced", "-rc", "cqp",
+                    "-qp_i", "19", "-qp_p", "21", "-qp_b", "23", "-pix_fmt", "yuv420p"]),
+]
+CPU_H264_ARGS = ["-c:v", "libx264", "-preset", "fast", "-crf", "18", "-pix_fmt", "yuv420p"]
+
+# detection result, kept in memory while the app runs (see get_h264_video_args)
+_h264_args_cache = None
+_h264_lock = threading.Lock()
+
+""" Test if an encoder really works on this machine: encode a tiny black video.
+    Having the GPU is not enough (old GPU without encoder, outdated driver,
+    ffmpeg build without support...), so testing checks all of that at once.
+    It takes ~0.05s when the encoder doesn't exist.
+"""
+def _encoder_works(ffmpeg_exe, encoder_args):
+    creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+    command = [
+        ffmpeg_exe, "-hide_banner", "-v", "error",
+        "-f", "lavfi", "-i", "color=black:s=256x256:r=30:d=0.2",
+        *encoder_args,
+        "-f", "null", "-",
+    ]
+    try:
+        result = subprocess.run(command, capture_output=True, timeout=10,
+                                creationflags=creationflags)
+        return result.returncode == 0
+    except Exception:
+        return False
+
+# find the first working encoder, GPU first, CPU (libx264) if there's no GPU
+def _detect_h264_args():
+    try:
+        ffmpeg_exe = get_ffmpeg_exe()
+    except Exception:
+        return list(CPU_H264_ARGS)
+    for _name, args in H264_ENCODERS:
+        if _encoder_works(ffmpeg_exe, args):
+            return list(args)
+    return list(CPU_H264_ARGS)
+
+""" Return the ffmpeg video arguments to encode H.264: GPU when available, else CPU.
+    Detected once per app run (at the first conversion), the result stays in
+    memory - nothing is saved, so a new GPU/driver is detected on next run.
+    The lock is needed because up to 3 downloads can call it at the same time.
+"""
+def get_h264_video_args():
+    global _h264_args_cache
+    with _h264_lock:
+        if _h264_args_cache is None:
+            _h264_args_cache = _detect_h264_args()
+        return list(_h264_args_cache)

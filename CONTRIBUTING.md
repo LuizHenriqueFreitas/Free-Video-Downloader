@@ -7,10 +7,13 @@ At this moment i'm working to make the code really understandable, adding docume
 
 #### Important thing: read Docs/ files, like: About.md, Vision.md and Vision.md to understand this project history and how it's built
 
-We dont have a official requiriments.txt file, that will be made someday.   
-Basicaly you will need pyside packages, pytest packages are recommended to execute the unity tests.
-(Probably) you also will need to has ffmpeg, nodejs, ytdlp, all the external dependicies intalled localy on your pc.
-Maybe you need something else - soon as possible that will be updated.
+Python packages are listed on `src/requirements.txt`:   
+`pip install -r src/requirements.txt`
+
+You also will need the external tools: ffmpeg + ffprobe, nodejs and yt-dlp (bundled on Windows at `src/tools/ffmpeg/bin/` and `src/bin/`, or installed on your system).
+
+To run the unit tests, run pytest from the **repository root** (the tests import `src.` modules):   
+`python -m pytest src/tests`
 
 
 ## If you don't agree with GET MEDIA FREE politices

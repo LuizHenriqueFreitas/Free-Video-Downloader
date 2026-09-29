@@ -3,7 +3,8 @@
 """ Here you will find:
     - Trimmer tool component settings;
     - UI implementation;
-    - real time media player logic + thumbnail fallback;
+    - media player logic (local preview file) + thumbnail fallback;
+    - "loading" state while the preview is downloaded;
     - player buttons logic (play, pause, etc);
     - markers and timelines logic and UI implementation;
 """
@@ -33,7 +34,9 @@ def format_time(seconds):
     return f"{m:02d}:{s:02d}"
 
 """ Clip select (start/end), with video preview.
-    Try to use real player (QMediaPlayer), if ocurred an error
+    Starts on "loading" state (thumbnail + cut bar already working) while the
+    preview file is downloaded (see PreviewDownloader at core/video_info.py).
+    Then try to use real player (QMediaPlayer), if ocurred an error
     automaticaly change just to thumbnail + timebar and selectors.
 """
 # main class from this file
@@ -54,6 +57,8 @@ class ClipTrimmer(QWidget):
             # that will need to be translated on location update
             self._enter_fallback("Duração desconhecida — corte indisponível.")
             self.slider.setEnabled(False)
+        else:
+            self._show_loading()
 
 
     """ ====================
@@ -158,15 +163,25 @@ class ClipTrimmer(QWidget):
 
 
     """ ========================
-          LOAD PREVIEW URL
+          LOAD PREVIEW FILE
       ======================== """
-    # load real time media player
-    def load_preview(self, url):
+    # "loading" state: thumbnail + message, cut bar works, player controls wait
+    def _show_loading(self):
+        self.video_widget.hide()
+        self._set_player_controls_enabled(False)
+        # that will need to be translated on location update
+        self._show_thumbnail("Carregando pré-visualização…")
+        self.hint_label.setText(
+            "Carregando pré-visualização… a barra de corte já pode ser usada."
+        )
+
+    # load the local preview file (None = preview download failed)
+    def load_preview(self, path):
         if self._fallback:
             return
-        if not url:
+        if not path or not os.path.exists(path):
             # that will need to be translated on location update
-            self._enter_fallback("Preview indisponível — use a barra de tempo.")
+            self._enter_fallback("Preview indisponível para este link — use a barra de tempo.")
             return
 
         try:
@@ -180,13 +195,41 @@ class ClipTrimmer(QWidget):
             self._player.durationChanged.connect(self._on_duration_changed)
             self._player.mediaStatusChanged.connect(self._on_media_status)
 
-            # DEBUG temporário: investigando 403 no preview direto do CDN
-            print(f"[ClipTrimmer.load_preview] url={url}")
+            # leave "loading" state
+            self.fallback_label.hide()
+            self.video_widget.show()
+            self._set_player_controls_enabled(True)
+            # that will need to be translated on location update
+            self.hint_label.setText("Arraste os marcadores ou use os botões para definir o trecho.")
 
-            self._player.setSource(QUrl(url))
+            # local file: fromLocalFile() is needed (Windows paths like C:\...)
+            self._player.setSource(QUrl.fromLocalFile(path))
         except Exception as e:
             # that will need to be translated on location update
             self._enter_fallback(f"Preview indisponível ({e}).")
+
+    # enable/disable everything that depends on the player
+    def _set_player_controls_enabled(self, enabled):
+        self.play_btn.setEnabled(enabled)
+        self.preview_clip_btn.setEnabled(enabled)
+        self.mark_start_btn.setEnabled(enabled)
+        self.mark_end_btn.setEnabled(enabled)
+        self.seek_slider.setEnabled(enabled)
+
+    # show media thumbnail as visual reference (or the message if there's none)
+    def _show_thumbnail(self, message):
+        self.fallback_label.clear()
+        if self._thumbnail_path and os.path.exists(self._thumbnail_path):
+            pix = QPixmap(self._thumbnail_path)
+            if not pix.isNull():
+                self.fallback_label.setPixmap(
+                    pix.scaled(self.fallback_label.width() or 390, self.fallback_label.height(),
+                               Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                )
+        if not self.fallback_label.pixmap() or self.fallback_label.pixmap().isNull():
+            # that will need to be translated on location update
+            self.fallback_label.setText(message or "Preview indisponível")
+        self.fallback_label.show()
 
 
     """ ====================
@@ -201,24 +244,10 @@ class ClipTrimmer(QWidget):
             except Exception:
                 pass
         self.video_widget.hide()
-        self.play_btn.setEnabled(False)
-        self.preview_clip_btn.setEnabled(False)
-        self.mark_start_btn.setEnabled(False)
-        self.mark_end_btn.setEnabled(False)
-        self.seek_slider.setEnabled(False)
+        self._set_player_controls_enabled(False)
 
         # show media thumbnail as visual reference
-        if self._thumbnail_path and os.path.exists(self._thumbnail_path):
-            pix = QPixmap(self._thumbnail_path)
-            if not pix.isNull():
-                self.fallback_label.setPixmap(
-                    pix.scaled(self.fallback_label.size(),
-                               Qt.KeepAspectRatio, Qt.SmoothTransformation)
-                )
-        if not self.fallback_label.pixmap() or self.fallback_label.pixmap().isNull():
-            # that will need to be translated on location update
-            self.fallback_label.setText(message or "Preview indisponível")
-        self.fallback_label.show()
+        self._show_thumbnail(message)
 
         if message:
             # that will need to be translated on location update
@@ -227,15 +256,11 @@ class ClipTrimmer(QWidget):
     # player generic error alert
     def _on_player_error(self, error, error_string=""):
         if error != QMediaPlayer.NoError:
-            # DEBUG temporário: investigando 403 no preview direto do CDN
-            print(f"[ClipTrimmer._on_player_error] error={error} error_string={error_string!r}")
             # that will need to be translated on location update
             self._enter_fallback("Não foi possível reproduzir o vídeo aqui.")
 
     # media preview error alert
     def _on_media_status(self, status):
-        # DEBUG temporário: investigando 403 no preview direto do CDN
-        print(f"[ClipTrimmer._on_media_status] status={status}")
         if status == QMediaPlayer.InvalidMedia:
             # that will need to be translated on location update
             self._enter_fallback("Formato de stream não suportado para preview.")

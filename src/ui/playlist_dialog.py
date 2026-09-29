@@ -291,9 +291,9 @@ class PlaylistDialog(QDialog):
         for index, entry in selected:
             # that will need to be translated at location update
             base_title = entry.get("title") or "video"
-            title = resolve_unique_title(folder, base_title, fmt)
-            while title in used_titles:
-                title = resolve_unique_title(folder, title + " ", fmt)
+            # used_titles: names of the videos above in this same playlist, so two videos
+            # with the same title (ex.: "[Private video]") get "title" and "title (1)"
+            title = resolve_unique_title(folder, base_title, fmt, reserved=used_titles)
             used_titles.add(title)
 
             quality_id = None

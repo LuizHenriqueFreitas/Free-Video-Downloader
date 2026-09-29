@@ -17,6 +17,23 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import QPixmap
 from PySide6.QtCore import Qt
 
+# progress bar colors: download (green) and conversion/cut after download (blue)
+DOWNLOAD_BAR_STYLE = "QProgressBar::chunk { background-color: #4CAF50; }"
+CONVERSION_BAR_STYLE = "QProgressBar::chunk { background-color: #2196F3; }"
+
+# estimated time left to friendly text (None or negative = still calculating)
+# that will need to be translated at location update
+def format_remaining(seconds):
+    if seconds is None or seconds < 0:
+        return "calculando tempo…"
+    seconds = int(seconds)
+    if seconds < 60:
+        return f"~{seconds} s restantes"
+    if seconds < 3600:
+        return f"~{round(seconds / 60)} min restantes"
+    h, rest = divmod(seconds, 3600)
+    return f"~{h} h {rest // 60:02d} min restantes"
+
 # Download Card component class
 class DownloadCard(QWidget):
     def __init__(self, item):
@@ -27,6 +44,8 @@ class DownloadCard(QWidget):
         self.on_retry = None
         self.on_copy = None
         self.on_remove = None
+        # None while downloading, "convert"/"cut" while ffmpeg processes the file
+        self._phase = None
 
         # status visual feedback is disconect to real status to doesn't make wrogn changes
         self._terminal_view = item.status in ("completed", "error", "cancelled")
@@ -90,7 +109,7 @@ class DownloadCard(QWidget):
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
         self.progress_bar.setFormat("%p%")
-        self.progress_bar.setStyleSheet("QProgressBar::chunk { background-color: #4CAF50; }")
+        self.progress_bar.setStyleSheet(DOWNLOAD_BAR_STYLE)
         progress_layout.addWidget(self.progress_bar)
         self.progress_container.hide()
         center_layout.addWidget(self.progress_container)
@@ -282,6 +301,11 @@ class DownloadCard(QWidget):
             "cancelled":   ("#9E9E9E", "Cancelado")
         }
         color, text = status_map.get(status, ("#9E9E9E", status))
+
+        # any status change leaves the conversion mode (a retry starts green again)
+        if self._phase is not None:
+            self._phase = None
+            self.progress_bar.setStyleSheet(DOWNLOAD_BAR_STYLE)
         self.status_dot.setStyleSheet(f"background-color: {color}; border-radius: 6px;")
         self.status_label.setText(text)
 
@@ -330,17 +354,42 @@ class DownloadCard(QWidget):
       ===================== """
     # progress bar updater
     def update_progress(self, value):
+        # the conversion/cut has its own progress (see update_conversion)
+        if self._phase is not None:
+            return
         value = max(0, min(100, value))
-        # review the clip progress bar logic to emproviment this
-        if self._is_clip() and value >= 99:
+        if self.progress_bar.maximum() == 0:
             self.progress_bar.setRange(0, 100)
-            # that will need to be translated at location update
-            self.progress_bar.setFormat("Cortando trecho...")
-        else:
-            if self.progress_bar.maximum() == 0:
-                self.progress_bar.setRange(0, 100)
-            self.progress_bar.setValue(value)
-            self.progress_bar.setFormat(f"{value}%")
+        self.progress_bar.setValue(value)
+        self.progress_bar.setFormat(f"{value}%")
+
+    """ Conversion / cut progress, after the download finishes.
+        Uses the same progress bar (same place, same card size), blue colored.
+        percent -1 = unknown duration (busy bar), seconds_left -1 = calculating.
+    """
+    def update_conversion(self, kind, percent, seconds_left):
+        # first call: enter conversion mode
+        if self._phase != kind:
+            self._phase = kind
+            self.progress_bar.setStyleSheet(CONVERSION_BAR_STYLE)
+
+        # that will need to be translated at location update
+        action = "Cortando trecho…" if kind == "cut" else "Convertendo para H.264…"
+
+        if percent < 0:
+            # unknown duration: "busy" animation, no percent and no time
+            self.progress_bar.setRange(0, 0)
+            self.progress_bar.setFormat(action)
+            return
+
+        percent = max(0, min(100, percent))
+        if self.progress_bar.maximum() == 0:
+            self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(percent)
+        # "%" is special on QProgressBar format (%p, %v), "%%" is a literal "%"
+        self.progress_bar.setFormat(
+            f"{action} {percent}%% • {format_remaining(seconds_left)}"
+        )
 
     # card updade estatus
     def update_status(self, status):
@@ -355,11 +404,6 @@ class DownloadCard(QWidget):
         if self.item.status != "downloading" or not self.progress_container.isVisibleTo(self):
             self.item.status = "downloading"
             self._apply_status()
-
-    # check if is a clip download
-    def _is_clip(self):
-            return (getattr(self.item, "clip_start", None) is not None
-                    or getattr(self.item, "clip_end", None) is not None)
 
 
     """ ==================

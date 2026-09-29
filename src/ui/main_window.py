@@ -68,6 +68,8 @@ class MainWindow(QMainWindow):
     sig_finished = Signal(object)
     sig_error = Signal(object, str)
     sig_cancelled = Signal(object)
+    # item id, kind ("convert"/"cut"), percent, seconds left
+    sig_conversion = Signal(str, str, int, int)
 
     def __init__(self):
         super().__init__()
@@ -91,6 +93,7 @@ class MainWindow(QMainWindow):
         self.sig_finished.connect(self._on_download_finished)
         self.sig_error.connect(self._on_download_error)
         self.sig_cancelled.connect(self._on_download_cancelled)
+        self.sig_conversion.connect(self._on_conversion_ui)
 
         self._setup_ui()
         self._render_history()
@@ -478,6 +481,7 @@ class MainWindow(QMainWindow):
             on_finished=lambda i: self.sig_finished.emit(i),
             on_error=lambda i, m: self.sig_error.emit(i, m),
             on_cancel=lambda i: self.sig_cancelled.emit(i),
+            on_conversion=lambda k, p, s, _id=item.id: self.sig_conversion.emit(_id, k, int(p), int(s)),
         )
 
         # cacelling download
@@ -495,6 +499,15 @@ class MainWindow(QMainWindow):
             return
         card.mark_downloading()
         card.update_progress(percent)
+
+    # conversion/cut progress bar (after the download finishes)
+    @Slot(str, str, int, int)
+    def _on_conversion_ui(self, item_id, kind, percent, seconds_left):
+        card = self.cards.get(item_id)
+        if not card:
+            return
+        card.mark_downloading()
+        card.update_conversion(kind, percent, seconds_left)
 
     # set donwload finished to UI feedback
     def _on_download_finished(self, item):
