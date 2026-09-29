@@ -14,12 +14,23 @@ Cobrem:
 """
 
 import os
+import json
 import stat
 import sys
 import shutil
 import pytest
 
 from core import utils
+
+# fake binaries below are "#!/bin/sh" scripts and permissions use POSIX modes
+posix_only = pytest.mark.skipif(sys.platform == "win32", reason="POSIX only")
+
+
+@pytest.fixture(autouse=True)
+def _reset_binary_caches(monkeypatch):
+    # probe results and the yt-dlp seeding flag are cached per app run
+    monkeypatch.setattr(utils, "_probe_cache", {})
+    monkeypatch.setattr(utils, "_ytdlp_seeded", False)
 
 
 # ---------------------------------------------------------------------------
@@ -313,15 +324,53 @@ class TestGetUserDataDir:
         assert result == os.path.join(self._SRC_DIR, "data")
         assert os.path.isdir(result)
 
-    def test_frozen_mode_uses_executable_dir(self, tmp_path, monkeypatch):
+    def test_frozen_mode_uses_local_appdata_not_executable_dir(self, tmp_path, monkeypatch):
+        # installed at "Program Files" the .exe folder is read-only
         fake_exe_dir = tmp_path / "app"
         fake_exe_dir.mkdir()
-        fake_exe = fake_exe_dir / "app.exe"
         monkeypatch.setattr(sys, "frozen", True, raising=False)
-        monkeypatch.setattr(sys, "executable", str(fake_exe), raising=False)
+        monkeypatch.setattr(sys, "executable", str(fake_exe_dir / "app.exe"), raising=False)
+        monkeypatch.setattr(utils.sys, "platform", "win32")
+        monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
         result = utils.get_user_data_dir()
-        assert result == os.path.join(str(fake_exe_dir), "data")
+        assert result == os.path.join(str(tmp_path / "local"), utils.APP_DATA_FOLDER, "data")
         assert os.path.isdir(result)
+        assert not (fake_exe_dir / "data").exists()
+
+    def test_frozen_mode_linux_uses_xdg_data_home(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(sys, "frozen", True, raising=False)
+        monkeypatch.setattr(sys, "executable", str(tmp_path / "app"), raising=False)
+        monkeypatch.setattr(utils.sys, "platform", "linux")
+        monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "share"))
+        result = utils.get_user_data_dir()
+        assert result == os.path.join(str(tmp_path / "share"), utils.APP_DATA_FOLDER, "data")
+
+    def test_frozen_mode_migrates_legacy_data_once(self, tmp_path, monkeypatch):
+        # old versions kept "data" near the .exe: it's copied on the first run
+        exe_dir = tmp_path / "app"
+        legacy = exe_dir / "data"
+        (legacy / "temp").mkdir(parents=True)
+        (legacy / "temp" / "junk.jpg").write_text("x")
+        (legacy / "cookies.txt").write_text("cookie")
+        thumb = os.path.join(str(legacy), "thumbnails", "a.jpg")
+        (legacy / "history.json").write_text(json.dumps([{"thumbnail": thumb}]), encoding="utf-8")
+        monkeypatch.setattr(sys, "frozen", True, raising=False)
+        monkeypatch.setattr(sys, "executable", str(exe_dir / "app.exe"), raising=False)
+        monkeypatch.setattr(utils.sys, "platform", "win32")
+        monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
+
+        result = utils.get_user_data_dir()
+
+        assert open(os.path.join(result, "cookies.txt")).read() == "cookie"
+        assert not os.path.exists(os.path.join(result, "temp", "junk.jpg"))
+        with open(os.path.join(result, "history.json"), encoding="utf-8") as f:
+            history = json.load(f)
+        assert history[0]["thumbnail"] == os.path.join(result, "thumbnails", "a.jpg")
+
+        # new folder exists now: legacy changes are not copied again
+        (legacy / "cookies.txt").write_text("changed")
+        utils.get_user_data_dir()
+        assert open(os.path.join(result, "cookies.txt")).read() == "cookie"
 
     def test_creates_directory_if_missing(self, tmp_path, monkeypatch):
         monkeypatch.setattr(sys, "frozen", False, raising=False)
@@ -425,6 +474,82 @@ class TestGetYtdlpPath:
 
 
 # ---------------------------------------------------------------------------
+# yt-dlp writable copy (packaged app)
+# ---------------------------------------------------------------------------
+
+class TestYtdlpWritableCopy:
+
+    @pytest.fixture
+    def frozen_app(self, tmp_path, monkeypatch):
+        bundle = tmp_path / "bundle"
+        (bundle / "bin").mkdir(parents=True)
+        bundled = bundle / "bin" / "yt-dlp.exe"
+        bundled.write_bytes(b"bundled")
+        monkeypatch.setattr(sys, "frozen", True, raising=False)
+        monkeypatch.setattr(sys, "_MEIPASS", str(bundle), raising=False)
+        monkeypatch.setattr(sys, "executable", str(bundle / "app.exe"), raising=False)
+        monkeypatch.setattr(utils.sys, "platform", "win32")
+        monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
+        # fake "--version" answers, by file content
+        versions = {b"bundled": "2026.08.19"}
+
+        def fake_version(path):
+            if not os.path.exists(path):
+                return None
+            with open(path, "rb") as f:
+                return versions.get(f.read())
+        monkeypatch.setattr(utils, "_ytdlp_version", fake_version)
+        return bundled, versions
+
+    def _write_copy(self, content):
+        writable = utils.get_ytdlp_update_path()
+        os.makedirs(os.path.dirname(writable))
+        with open(writable, "wb") as f:
+            f.write(content)
+        return writable
+
+    def test_update_path_is_in_user_folder_when_frozen(self, frozen_app, tmp_path):
+        assert utils.get_ytdlp_update_path() == os.path.join(
+            str(tmp_path / "local"), utils.APP_DATA_FOLDER, "bin", "yt-dlp.exe")
+
+    def test_update_path_is_bundled_file_in_dev_mode(self, monkeypatch):
+        monkeypatch.setattr(sys, "frozen", False, raising=False)
+        monkeypatch.delattr(sys, "_MEIPASS", raising=False)
+        assert os.path.normcase(utils.get_ytdlp_update_path()) == \
+            os.path.normcase(utils.get_bundled_ytdlp_path())
+
+    def test_first_run_copies_bundled_and_uses_copy(self, frozen_app):
+        result = utils.get_ytdlp_path()
+        assert result == utils.get_ytdlp_update_path()
+        with open(result, "rb") as f:
+            assert f.read() == b"bundled"
+
+    def test_newer_updated_copy_is_kept(self, frozen_app):
+        _, versions = frozen_app
+        versions[b"updated"] = "2026.09.20"
+        writable = self._write_copy(b"updated")
+        assert utils.get_ytdlp_path() == writable
+        with open(writable, "rb") as f:
+            assert f.read() == b"updated"
+
+    def test_older_copy_is_replaced_by_newer_bundled(self, frozen_app):
+        # a new app version ships a newer yt-dlp than the old updated copy
+        _, versions = frozen_app
+        versions[b"old"] = "2025.01.01"
+        writable = self._write_copy(b"old")
+        utils.get_ytdlp_path()
+        with open(writable, "rb") as f:
+            assert f.read() == b"bundled"
+
+    def test_falls_back_to_bundled_when_copy_fails(self, frozen_app, monkeypatch):
+        bundled, _ = frozen_app
+        def fail(*args, **kwargs):
+            raise OSError("read-only")
+        monkeypatch.setattr(utils.shutil, "copy2", fail)
+        assert utils.get_ytdlp_path() == str(bundled)
+
+
+# ---------------------------------------------------------------------------
 # get_ffmpeg_path
 # ---------------------------------------------------------------------------
 
@@ -516,14 +641,17 @@ class TestNodeVersionSupported:
         script.chmod(0o755)
         return str(script)
 
+    @posix_only
     def test_supported_version(self, tmp_path):
         fake_node = self._make_fake_node(tmp_path, "v22.23.2")
         assert utils._node_version_supported(fake_node) is True
 
+    @posix_only
     def test_outdated_version(self, tmp_path):
         fake_node = self._make_fake_node(tmp_path, "v18.19.1")
         assert utils._node_version_supported(fake_node) is False
 
+    @posix_only
     def test_unparseable_output_defaults_to_true(self, tmp_path):
         # não bloqueia o usuário quando não conseguimos determinar a versão
         fake_node = self._make_fake_node(tmp_path, "not-a-version")
@@ -531,6 +659,53 @@ class TestNodeVersionSupported:
 
     def test_nonexistent_path_defaults_to_true(self):
         assert utils._node_version_supported("/nonexistent/node") is True
+
+    @pytest.mark.parametrize("output, expected", [
+        ("v24.1.0", True), ("v22.0.0", True), ("v20.11.1", False), ("garbage", True),
+    ])
+    def test_parses_version_output(self, monkeypatch, output, expected):
+        monkeypatch.setattr(utils, "_run_version", lambda path: (0, output))
+        assert utils._node_version_supported("/fake/node") is expected
+
+
+# ---------------------------------------------------------------------------
+# binary probe cache
+# ---------------------------------------------------------------------------
+
+class TestCachedVersion:
+
+    def _counting_probe(self, monkeypatch):
+        calls = []
+        def fake_run(path):
+            calls.append(path)
+            return (0, "1.0")
+        monkeypatch.setattr(utils, "_run_version", fake_run)
+        return calls
+
+    def test_same_file_is_probed_once(self, tmp_path, monkeypatch):
+        calls = self._counting_probe(monkeypatch)
+        binary = tmp_path / "tool.exe"
+        binary.write_bytes(b"v1")
+        assert utils._cached_version(str(binary)) == (0, "1.0")
+        assert utils._cached_version(str(binary)) == (0, "1.0")
+        assert len(calls) == 1
+
+    def test_replaced_file_is_probed_again(self, tmp_path, monkeypatch):
+        # ex.: yt-dlp updated while the app is open
+        calls = self._counting_probe(monkeypatch)
+        binary = tmp_path / "tool.exe"
+        binary.write_bytes(b"v1")
+        utils._cached_version(str(binary))
+        binary.write_bytes(b"version 2")
+        utils._cached_version(str(binary))
+        assert len(calls) == 2
+
+    def test_missing_file_is_not_cached(self, tmp_path, monkeypatch):
+        calls = self._counting_probe(monkeypatch)
+        missing = str(tmp_path / "missing.exe")
+        utils._cached_version(missing)
+        utils._cached_version(missing)
+        assert len(calls) == 2
 
 
 # ---------------------------------------------------------------------------
@@ -566,6 +741,7 @@ class TestSecureCookiesFile:
         # não deve lançar exceção mesmo que o arquivo não exista
         utils.secure_cookies_file(str(tmp_path / "nao_existe.txt"))
 
+    @posix_only
     def test_sets_owner_read_write_permissions(self, tmp_path):
         f = tmp_path / "cookies.txt"
         f.write_text("data")
@@ -603,6 +779,7 @@ class TestSaveCookies:
         utils.save_cookies(b"abc")
         assert (tmp_path / "data").is_dir()
 
+    @posix_only
     def test_applies_secure_permissions(self, tmp_path, monkeypatch):
         monkeypatch.setattr(utils, "get_user_data_dir", lambda: str(tmp_path / "data"))
         utils.save_cookies(b"abc")

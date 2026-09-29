@@ -55,6 +55,17 @@ Provides a trimmer tool for any site yt-dlp can download (preview with sound and
 
 Code review and documentation for new versions and more reability of the app.
 
+v2.5.1: trimmer tool (advanced mode) restricted to single youtube videos - hidden for other sites and playlists.
+
+
+---
+
+
+### v2.6.0
+Localization: the whole interface is available in Portuguese (Brazil) and English.
+
+The installer asks the language and the app starts in it; it can also be changed later on the app ("Idioma" / "Language" selector, applied after a restart).
+
 
 ---
 
@@ -63,8 +74,6 @@ Code review and documentation for new versions and more reability of the app.
 Full auto-update and more durability enhancement implementation.
 
 All code translated to english.
-
-Add to installer a language selector, english or portuguese.
 
 Add to projetc a landingpage and github page to new people find the software.
 

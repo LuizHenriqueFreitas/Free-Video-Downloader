@@ -53,21 +53,41 @@ To remove the cookies at any time, press **"Remove cookies"** button.
 
 ### **For devs**
 You'll need Python, FFmpeg and Node install to develop new features, ***or the binary files***, their paths are:
- > ffmpeg_path = tools/ffmpeg/bin/ffmpeg.exe and ffprobe.exe
+ > ffmpeg_path = src/tools/ffmpeg/bin/ffmpeg.exe and ffprobe.exe
 
- > node_path = bin/node/ <here you put all node binary files, like node.exe>
+ > node_path = src/bin/node/node.exe
 
-**If you want to compile**   
-Is recomend you has the binary files to compile embed using a packager like NSIS, or the .exe will just work on PCs with node and ffmpeg installed.
+ > yt-dlp_path = src/bin/yt-dlp.exe
 
-But if is just for own use you can run by main.py script on your pc.
+On Windows you don't need to download them by hand:
+```
+pip install -r src/requirements.txt
+powershell -ExecutionPolicy Bypass -File packaging\fetch_deps.ps1
+python src/main.py
+```
+
+### Build the installer
+Needs Python with `src/requirements.txt` and [Inno Setup 6](https://jrsoftware.org/isinfo.php) (`winget install JRSoftware.InnoSetup`).
+```
+powershell -ExecutionPolicy Bypass -File packaging\build.ps1
+```
+It downloads the third-party binaries (`fetch_deps.ps1`), runs the tests, packs the app with PyInstaller (`GetMediaFree.spec`, one folder with everything embedded) and builds the installer (`installer.iss`):
+- `packaging/out/dist/GetMediaFree/` - app folder, runs without installing
+- `packaging/out/installer/GetMediaFree-<version>-Setup.exe` - installer
+
+The version comes from `APP_VERSION` at `src/services/updater.py`.   
+Useful options: `-SkipInstaller`, `-SkipTests`, `-SkipFetch`, `-UpdateYtDlp`.
+
+The app icon (`src/assets/icon.ico`) is generated from `website/assets/app-icon.png` by `python packaging/make_icon.py` - run it again if the artwork changes.
+
+The installed app saves user data (history, settings, cookies, updated yt-dlp) at `%LOCALAPPDATA%\GetMediaFree`, so it doesn't need admin rights.
 
 ---
 
 ## 📣 Frequent errors
 
 ### if permission problem
-Try: Execut the progrom as admin
+Since the installer version, user data is saved at `%LOCALAPPDATA%\GetMediaFree` and the app doesn't need admin rights. If it still happens, check if that folder is writable.
 
 ### cookies problem
 Try:   
@@ -117,7 +137,7 @@ You can find the most new oficial version of Video Downloader on the Release Pag
 - FFmpeg (embedded)
 - NodeJs
 - PyInstaller
-- NSIS to build the installer
+- Inno Setup to build the installer
 
 ---
 
@@ -126,7 +146,7 @@ You can find the most new oficial version of Video Downloader on the Release Pag
 - yt-dlp handles video downloading
 - FFmpeg merges video/audio streams and converts formats
 - PySide6 provides the graphical interface
-- PyInstaller packages everything into a single executable
+- PyInstaller packages everything into one app folder, and Inno Setup turns it into a single installer
 
 ---
 
@@ -134,4 +154,5 @@ You can find the most new oficial version of Video Downloader on the Release Pag
 
 This project uses yt-dlp under its respective license.<br>
 This project uses node under its respective license.<br>
-FFmpeg is distributed according to its official license terms.
+FFmpeg is distributed according to its official license terms (the embedded build is GPLv3).<br>
+All third-party licenses and source links: [licenses/THIRD_PARTY_NOTICES.txt](licenses/THIRD_PARTY_NOTICES.txt).

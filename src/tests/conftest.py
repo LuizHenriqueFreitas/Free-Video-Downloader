@@ -2,7 +2,7 @@
 
 import pytest
 from datetime import datetime
-from src.models.download_item import DownloadItem
+from models.download_item import DownloadItem
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -17,6 +17,18 @@ def _qapplication():
     from PySide6.QtWidgets import QApplication
     app = QApplication.instance() or QApplication([])
     yield app
+
+
+@pytest.fixture(autouse=True)
+def _default_language():
+    """
+    As mensagens esperadas pelos testes estão em português: fixa o idioma
+    padrão em cada teste, mesmo se algum teste anterior trocou o idioma.
+    """
+    from core import i18n
+    i18n.set_language(i18n.DEFAULT_LANGUAGE)
+    yield
+    i18n.set_language(i18n.DEFAULT_LANGUAGE)
 
 
 @pytest.fixture

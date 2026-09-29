@@ -57,10 +57,11 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import QTimer, QThread, QObject, Signal, Slot
 
+from core.i18n import tr
 from core.video_info import VideoInfo, PreviewDownloader
 from core.utils import (
     resource_path, cookies_exists, looks_like_url,
-    is_youtube_playlist,
+    is_youtube, is_youtube_playlist,
     file_conflict, resolve_unique_title, expected_output_path,
     safe_filename, invalid_filename_chars, is_valid_filename, get_temp_dir
 )
@@ -194,7 +195,7 @@ class DownloadDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
 
-        self.setWindowTitle("Novo Download")
+        self.setWindowTitle(tr("dialog.title"))
         self.setMinimumSize(560, 600)
 
         self.settings = SettingsStore()
@@ -245,13 +246,13 @@ class DownloadDialog(QDialog):
         self.main_layout = layout
 
         # URL input
-        layout.addWidget(QLabel("URL do vídeo (YouTube, TikTok, Instagram, etc.):"))
+        layout.addWidget(QLabel(tr("dialog.url_label")))
         self.url_input = QLineEdit()
         self.url_input.textChanged.connect(self._on_url_changed)
         layout.addWidget(self.url_input)
 
         # advanced mode (trimmer) - hide untill get video data
-        self.advanced_check = QCheckBox("Selecionar trecho do vídeo (modo avançado)")
+        self.advanced_check = QCheckBox(tr("dialog.advanced_mode"))
         self.advanced_check.setChecked(self.settings.get_advanced_mode())
         self.advanced_check.toggled.connect(self._on_mode_toggled)
         self.advanced_check.hide()
@@ -271,16 +272,13 @@ class DownloadDialog(QDialog):
 
         # selector media extension + quality
         format_layout = QHBoxLayout()
-        # that will need to be translated at location update
-        format_layout.addWidget(QLabel("Formato:"))
+        format_layout.addWidget(QLabel(tr("common.format")))
         self.format_selector = QComboBox()
-        # that will need to be translated at location update
         self.format_selector.addItems(["MP4", "MP3"])
         self.format_selector.currentTextChanged.connect(self._on_format_changed)
         format_layout.addWidget(self.format_selector)
 
-        # that will need to be translated at location update
-        format_layout.addWidget(QLabel("Qualidade:"))
+        format_layout.addWidget(QLabel(tr("dialog.quality")))
         self.quality_selector = QComboBox()
         self.quality_selector.setEnabled(False)
         # "activated" is emitted only by user action (mouse/keyboard), not when
@@ -290,20 +288,17 @@ class DownloadDialog(QDialog):
         layout.addLayout(format_layout)
 
         # select final file folder
-        # that will need to be translated at location update
-        layout.addWidget(QLabel("Pasta de destino:"))
+        layout.addWidget(QLabel(tr("common.destination_folder")))
         path_layout = QHBoxLayout()
         self.path_input = QLineEdit()
-        # that will need to be translated at location update
-        path_button = QPushButton("Escolher pasta")
+        path_button = QPushButton(tr("common.choose_folder"))
         path_button.clicked.connect(self._choose_folder)
         path_layout.addWidget(self.path_input)
         path_layout.addWidget(path_button)
         layout.addLayout(path_layout)
 
         # fila saved name - default is the original media title
-        # that will need to be translated at location update
-        layout.addWidget(QLabel("Nome do arquivo (opcional):"))
+        layout.addWidget(QLabel(tr("dialog.filename_label")))
         self.filename_input = QLineEdit()
         self.filename_input.textChanged.connect(self._validate_filename_live)
         layout.addWidget(self.filename_input)
@@ -322,11 +317,9 @@ class DownloadDialog(QDialog):
         # fixed bottom buttons on page footer
         button_layout = QHBoxLayout()
         button_layout.setContentsMargins(10, 6, 10, 10)
-        # that will need to be translated at location update
-        self.cancel_button = QPushButton("Cancelar")
+        self.cancel_button = QPushButton(tr("common.cancel"))
         self.cancel_button.clicked.connect(self.reject)
-        # that will need to be translated at location update
-        self.ok_button = QPushButton("Adicionar")
+        self.ok_button = QPushButton(tr("dialog.add"))
         self.ok_button.clicked.connect(self._confirm)
         button_layout.addWidget(self.cancel_button)
         button_layout.addWidget(self.ok_button)
@@ -343,8 +336,7 @@ class DownloadDialog(QDialog):
         text = self.url_input.text().strip()
         # check if could be a url link
         if looks_like_url(text):
-            # that will need to be translated at location update
-            self.status_label.setText("Carregando informações...")
+            self.status_label.setText(tr("dialog.loading_info"))
             self.load_timer.start(800)
 
     # run when user change the media format extension to download - between .mp4 and .mp3
@@ -381,10 +373,7 @@ class DownloadDialog(QDialog):
         name = self.filename_input.text()
         bad = invalid_filename_chars(name)
         if bad:
-            self.filename_warning.setText(
-                # that will need to be translated at location update
-                "O nome do arquivo não pode conter: " + "  ".join(bad)
-            )
+            self.filename_warning.setText(tr("dialog.filename_invalid_live", chars="  ".join(bad)))
             self.filename_warning.show()
             self.ok_button.setEnabled(False)
         else:
@@ -417,20 +406,13 @@ class DownloadDialog(QDialog):
     # question to user if want to download all the playlist or just the link one
     def _ask_single_or_playlist(self, url, playlist_url):
         msg = QMessageBox(self)
-        # that will need to be translated at location update
-        msg.setWindowTitle("Playlist detectada")
+        msg.setWindowTitle(tr("dialog.playlist_detected_title"))
         msg.setIcon(QMessageBox.Question)
-        # that will need to be translated at location update
-        msg.setText(
-            "🔗 **Playlist detectada!**\n\n"
-            "A URL informada pertence a uma playlist do YouTube.\n\n"
-            "O que você deseja baixar?"
-        )
+        msg.setText(tr("dialog.playlist_detected_text"))
 
-        # that will need to be translated at location update
-        btn_video = msg.addButton("📹 Apenas este vídeo", QMessageBox.AcceptRole)
-        btn_playlist = msg.addButton("📋 Toda a playlist", QMessageBox.AcceptRole)
-        btn_cancel = msg.addButton("Cancelar", QMessageBox.RejectRole) # why is that off?
+        btn_video = msg.addButton(tr("dialog.only_this_video"), QMessageBox.AcceptRole)
+        btn_playlist = msg.addButton(tr("dialog.whole_playlist"), QMessageBox.AcceptRole)
+        btn_cancel = msg.addButton(tr("common.cancel"), QMessageBox.RejectRole) # why is that off?
         msg.setDefaultButton(btn_video)
         
         msg.exec()
@@ -455,8 +437,7 @@ class DownloadDialog(QDialog):
             return
 
         if not cookies_exists():
-            # that will need to be translated at location update
-            self.status_label.setText("⚠ Cookies não configurados")
+            self.status_label.setText(tr("dialog.cookies_not_set"))
             return
 
         # playlist url detection
@@ -472,9 +453,8 @@ class DownloadDialog(QDialog):
             choice = self._ask_single_or_playlist(url, playlist_url)
 
             if choice == "cancel":
-                # that will need to be translated at location update
                 self.url_input.clear()
-                self.status_label.setText("Cancelado pelo usuário")
+                self.status_label.setText(tr("dialog.cancelled_by_user"))
                 return
             elif choice == "playlist":
                 # same preparation of the normal pipeline below: abandon old request
@@ -485,8 +465,7 @@ class DownloadDialog(QDialog):
                 request_id = str(uuid4())
                 self._current_request_id = request_id
                 self._loading_url = playlist_url
-                # that will need to be translated at location update
-                self.status_label.setText("Carregando playlist...")
+                self.status_label.setText(tr("dialog.loading_playlist"))
                 self._start_playlist_worker(playlist_url, request_id)
                 return
             # choice == "single": continues to just one video normal download
@@ -510,8 +489,7 @@ class DownloadDialog(QDialog):
         # only bare playlist links (".../playlist?list=...") - links with a video id
         # (v=) were already handled by _ask_single_or_playlist() above
         if is_youtube_playlist(url) and not self._has_video_id(url):
-            # that will need to be translated at location update
-            self.status_label.setText("Carregando playlist...")
+            self.status_label.setText(tr("dialog.loading_playlist"))
             self._start_playlist_worker(url, request_id)
             return
 
@@ -523,8 +501,7 @@ class DownloadDialog(QDialog):
         temp_thumb = os.path.join(get_temp_dir(), f"{request_id}.jpg")
         self._current_thumb_path = temp_thumb
 
-        # that will need to be translated at location update
-        self.status_label.setText("Carregando...")
+        self.status_label.setText(tr("dialog.loading"))
 
         self._thread = QThread()
         self._worker = VideoInfoWorker(url, temp_thumb, request_id)
@@ -596,12 +573,13 @@ class DownloadDialog(QDialog):
 
         self._populate_quality_selector()
 
-        """ The advanced mode (trimmer) is available to any site yt-dlp can download,
-            as long as the media duration is known (the cut bar needs it).
+        """ The advanced mode (trimmer) is restricted to single youtube videos
+            (playlists go through PlaylistDialog, which has no trimmer), and the
+            media duration must be known (the cut bar needs it).
             The preview is loaded later (see _start_preview_worker) and, if it fails,
             the trimmer still works with thumbnail + cut bar.
         """
-        can_trim = bool(info.get("duration"))
+        can_trim = is_youtube(self._loading_url or "") and bool(info.get("duration"))
         if can_trim:
             self.advanced_check.show()
             if self.advanced_check.isChecked():
@@ -612,15 +590,14 @@ class DownloadDialog(QDialog):
             self._destroy_trimmer()
         self._update_mode_visibility()
 
-        # that will need to be translated at location update
-        self.status_label.setText("✔ Informações carregadas")
+        self.status_label.setText(tr("dialog.info_loaded"))
 
     # UI feedback when was an error getting video informations
     @Slot(str, str)
     def _on_video_error(self, msg, request_id):
         if request_id != self._current_request_id:
             return
-        self.status_label.setText(f"Erro: {msg}")
+        self.status_label.setText(tr("dialog.error", error=msg))
 
 
     """ ===========================
@@ -635,14 +612,10 @@ class DownloadDialog(QDialog):
             return
 
         if not playlist or not playlist.get("entries"):
-            # that will need to be translated at location update
-            self.status_label.setText("Nenhum vídeo encontrado na playlist.")
+            self.status_label.setText(tr("dialog.playlist_empty"))
             return
 
-        # that will need to be translated at location update
-        self.status_label.setText(
-            f"✔ Playlist carregada: {len(playlist['entries'])} vídeos"
-        )
+        self.status_label.setText(tr("dialog.playlist_loaded", count=len(playlist["entries"])))
 
         from ui.playlist_dialog import PlaylistDialog
         dlg = PlaylistDialog(playlist, self)
@@ -654,8 +627,7 @@ class DownloadDialog(QDialog):
     def _on_playlist_error(self, msg, request_id):
         if request_id != self._current_request_id:
             return
-        # that will need to be translated at location update
-        self.status_label.setText(f"Erro ao carregar playlist: {msg}")
+        self.status_label.setText(tr("dialog.playlist_error", error=msg))
 
 
     """ ==========================
@@ -673,7 +645,6 @@ class DownloadDialog(QDialog):
         # late import to isolate dependencies from QtMultimedia
         from ui.components.clip_trimmer import ClipTrimmer
 
-        # that will need to be translated at location update
         duration = self.video_info.get("duration")
         self.trimmer = ClipTrimmer(duration, self._current_thumb_path)
         self.trimmer_container.addWidget(self.trimmer)
@@ -750,11 +721,10 @@ class DownloadDialog(QDialog):
         VIDEO QUALITY - WITH FILE SIZE
       ================================ """
     # file size to friendly text (sizes are estimates, so "~")
-    # that will need to be translated at location update
     @staticmethod
     def _format_size(size_bytes):
         if not size_bytes:
-            return "tamanho desconhecido"
+            return tr("dialog.unknown_size")
         size_mb = size_bytes / (1024 * 1024)
         if size_mb >= 1024:
             return f"~{size_mb/1024:.1f} GB"
@@ -763,7 +733,7 @@ class DownloadDialog(QDialog):
     """ Insert quality informations to quality UI selector.
         MP4: one line per resolution with the real download size (video + audio,
         see VideoInfo._format_response). Resolutions without H.264 on the site
-        get "necessário conversão" (the file is converted after the download).
+        get a "conversion needed" tag (the file is converted after the download).
         MP3: one disabled line with the estimated size (always 192 kbps).
         Each item data: {"quality_id", "filesize", "label", "needs_conversion"}
     """
@@ -797,8 +767,7 @@ class DownloadDialog(QDialog):
             # h264 False = conversion needed / None = unknown codec (no tag)
             needs_conversion = f.get("h264") is False
             if needs_conversion:
-                # that will need to be translated at location update
-                label += " — necessário conversão"
+                label += tr("dialog.needs_conversion_suffix")
 
             quality_id = f"bestvideo[height<={height}]+bestaudio/best[height<={height}]"
             self.quality_selector.addItem(label, {
@@ -815,8 +784,7 @@ class DownloadDialog(QDialog):
 
         self.quality_selector.setEnabled(len(formats) > 0)
         if not formats:
-            # that will need to be translated at location update
-            self.quality_selector.addItem("Nenhum formato disponível", None)
+            self.quality_selector.addItem(tr("dialog.no_formats"), None)
             return
         self.quality_selector.setCurrentIndex(default_index if default_index is not None else 0)
 
@@ -837,24 +805,12 @@ class DownloadDialog(QDialog):
             return
 
         box = QMessageBox(self)
-        # that will need to be translated at location update
-        box.setWindowTitle("Esta qualidade precisa de conversão")
+        box.setWindowTitle(tr("dialog.conversion_title"))
         box.setIcon(QMessageBox.Information)
-        # that will need to be translated at location update
-        box.setText(
-            "O site não oferece essa resolução no formato aceito pelos editores "
-            "de vídeo (Premiere, Vegas, CapCut e outros).\n\n"
-            "Depois do download, o Get Media Free vai converter o vídeo no seu "
-            "computador para que ele possa ser usado na edição. Isso pode levar "
-            "bastante tempo, às vezes mais do que a duração do próprio vídeo, "
-            "dependendo do seu computador.\n\n"
-            "O progresso e o tempo restante aparecem no card do download."
-        )
-        # that will need to be translated at location update
-        dont_show = QCheckBox("Não mostrar esta mensagem novamente")
+        box.setText(tr("dialog.conversion_text"))
+        dont_show = QCheckBox(tr("common.dont_show_again"))
         box.setCheckBox(dont_show)
-        # that will need to be translated at location update
-        box.addButton("Fechar", QMessageBox.AcceptRole)
+        box.addButton(tr("common.close"), QMessageBox.AcceptRole)
         box.exec()
 
         if dont_show.isChecked():
@@ -866,8 +822,7 @@ class DownloadDialog(QDialog):
       ===================== """
     # choose folder logic
     def _choose_folder(self):
-        # that will need to be translated at location update
-        folder = QFileDialog.getExistingDirectory(self, "Escolher pasta")
+        folder = QFileDialog.getExistingDirectory(self, tr("common.choose_folder"))
         if folder:
             self.path_input.setText(folder)
 
@@ -878,14 +833,12 @@ class DownloadDialog(QDialog):
 
         # validate url and path data
         if not url or not path:
-            # that will need to be translated at location update
-            QMessageBox.warning(self, "Erro", "URL ou pasta inválida")
+            QMessageBox.warning(self, tr("common.error"), tr("dialog.invalid_url_or_folder"))
             return
 
         # validate video settings data
         if not self.video_info:
-            # that will need to be translated at location update
-            QMessageBox.warning(self, "Erro", "Carregue as informações do vídeo primeiro")
+            QMessageBox.warning(self, tr("common.error"), tr("dialog.load_info_first"))
             return
 
         fmt = self.format_selector.currentText()
@@ -894,11 +847,9 @@ class DownloadDialog(QDialog):
         # validate saved file name
         if filename and not is_valid_filename(filename):
             bad = invalid_filename_chars(filename)
-            # that will need to be translated at location update
             QMessageBox.warning(
-                self, "Nome inválido",
-                "O nome do arquivo não pode conter os caracteres:\n\n"
-                + "   ".join(bad)
+                self, tr("dialog.invalid_name_title"),
+                tr("dialog.invalid_name_text", chars="   ".join(bad))
             )
             return
 
@@ -922,13 +873,11 @@ class DownloadDialog(QDialog):
             clip_start, clip_end = self.trimmer.get_clip()
             # start and end markers at same point = empty clip
             if clip_start is not None and clip_end is not None and clip_end - clip_start < 1:
-                # that will need to be translated at location update
-                QMessageBox.warning(self, "Trecho inválido",
-                                    "O trecho selecionado precisa ter pelo menos 1 segundo.")
+                QMessageBox.warning(self, tr("dialog.invalid_clip_title"),
+                                    tr("dialog.invalid_clip_text"))
                 return
 
-        # that will need to be translated at location update
-        original_title = self.video_info.get("title", "Sem título")
+        original_title = self.video_info.get("title") or tr("common.untitled")
         final_title = filename if filename else safe_filename(original_title)
 
         """ verify existent equal file on destination folder (offers 3 options)
@@ -940,18 +889,12 @@ class DownloadDialog(QDialog):
         if file_conflict(path, final_title, fmt):
             existing = expected_output_path(path, final_title, fmt)
             box = QMessageBox(self)
-            # that will need to be translated at location update
-            box.setWindowTitle("Arquivo já existe")
+            box.setWindowTitle(tr("dialog.file_exists_title"))
             box.setIcon(QMessageBox.Warning)
-            # that will need to be translated at location update
-            box.setText(
-                f"Já existe um arquivo com este nome e tipo:\n\n{existing}\n\n"
-                f"O que deseja fazer?"
-            )
-            # that will need to be translated at location update
-            overwrite_btn = box.addButton("Substituir arquivo", QMessageBox.AcceptRole)
-            rename_btn = box.addButton("Renomear automaticamente", QMessageBox.AcceptRole)
-            back_btn = box.addButton("Voltar e trocar o nome", QMessageBox.RejectRole)
+            box.setText(tr("dialog.file_exists_text", path=existing))
+            overwrite_btn = box.addButton(tr("dialog.replace_file"), QMessageBox.AcceptRole)
+            rename_btn = box.addButton(tr("dialog.rename_automatically"), QMessageBox.AcceptRole)
+            back_btn = box.addButton(tr("dialog.go_back_rename"), QMessageBox.RejectRole)
             box.setDefaultButton(back_btn)
             box.exec()
 

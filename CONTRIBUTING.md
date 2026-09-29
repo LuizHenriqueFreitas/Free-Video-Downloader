@@ -10,10 +10,14 @@ At this moment i'm working to make the code really understandable, adding docume
 Python packages are listed on `src/requirements.txt`:   
 `pip install -r src/requirements.txt`
 
-You also will need the external tools: ffmpeg + ffprobe, nodejs and yt-dlp (bundled on Windows at `src/tools/ffmpeg/bin/` and `src/bin/`, or installed on your system).
+You also will need the external tools: ffmpeg + ffprobe, nodejs and yt-dlp (bundled on Windows at `src/tools/ffmpeg/bin/` and `src/bin/`, or installed on your system).   
+On Windows, download them (versions pinned, SHA256 checked) with:   
+`powershell -ExecutionPolicy Bypass -File packaging\fetch_deps.ps1`
 
-To run the unit tests, run pytest from the **repository root** (the tests import `src.` modules):   
+To run the unit tests (from the repository root or from `src/`):   
 `python -m pytest src/tests`
+
+To build the Windows app and installer, see **Build the installer** on README.md.
 
 
 ## If you don't agree with GET MEDIA FREE politices

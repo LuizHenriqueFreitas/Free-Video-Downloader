@@ -13,6 +13,7 @@ import subprocess
 import json
 import sys
 
+from core.i18n import tr
 # import some funcions from utils.py
 from core.utils import ( get_ytdlp_path, get_cookies_path, cookies_exists,
                         get_node_path, get_ffmpeg_path, is_youtube,
@@ -23,7 +24,7 @@ class VideoInfo:
     # JUST TO EXTRACT JSON INFO. where yt-dlp commandline is created. 
     def extract(self, url: str):
         if not url:
-            raise ValueError("URL vazia")
+            raise ValueError(tr("video.empty_url"))
 
         # instanciate ytdlp and node paths
         ytdlp_path = get_ytdlp_path()
@@ -63,12 +64,12 @@ class VideoInfo:
                 command,
                 capture_output=True,
                 text=True,
+                stdin=subprocess.DEVNULL,
                 creationflags=creationflags,
                 timeout=90,
             )
         except subprocess.TimeoutExpired:
-            # that need to be translated with location update
-            raise Exception("Erro ao extrair informações do vídeo")
+            raise Exception(tr("video.extract_failed"))
 
         if result.returncode != 0:
             raise Exception(self._parse_error(result.stderr))
@@ -76,8 +77,7 @@ class VideoInfo:
         try:
             info = json.loads(result.stdout)
         except Exception:
-            # that need to be translated with location update
-            raise Exception("Falha ao ler a resposta do yt-dlp")
+            raise Exception(tr("video.read_response_failed"))
 
         return self._format_response(info)
 
@@ -171,7 +171,7 @@ class VideoInfo:
         unique_audio_formats.reverse()  # smaller to bigger at UI
 
         return {
-            "title": info.get("title", "Sem título"),
+            "title": info.get("title") or tr("common.untitled"),
             "thumbnail": info.get("thumbnail"),
             "duration": info.get("duration"),
             "formats": unique_video_formats,
@@ -226,30 +226,30 @@ class VideoInfo:
         ERRORS FAST RESPONSE
       ========================== """
     
-    # that need to be translated with location update
+    # known yt-dlp errors (stderr is always english) to a short friendly message
     def _parse_error(self, stderr: str) -> str:
         s = stderr.lower()
 
         if "confirm you're not a bot" in s:
-            return "Bloqueado pelo youtube."
+            return tr("video.blocked_by_youtube")
 
         if "captcha" in s:
-            return "Bloqueado pelo youtube."
+            return tr("video.blocked_by_youtube")
 
         if "429" in s:
-            return "Muitas tentativas, tente \n novamente daqui algum tempo."
+            return tr("video.too_many_requests")
 
         if "cookies" in s:
-            return "Error com cookies."
+            return tr("video.cookies_error")
 
         if "unsupported" in s:
-            return "Link não suportado."
+            return tr("video.unsupported_link")
 
         if "private" in s:
-            return "Video privado/ inacessível."
+            return tr("video.private")
 
         if "sign in" in s:
-            return "Login necessário, tente colocar cookies mais recentes."
+            return tr("video.login_required")
 
         return stderr
 
@@ -293,6 +293,7 @@ class VideoInfo:
             command,
             capture_output=True,
             text=True,
+            stdin=subprocess.DEVNULL,
             creationflags=creationflags,
         )
 
@@ -304,8 +305,7 @@ class VideoInfo:
         try:
             info = json.loads(result.stdout)
         except Exception:
-            # that need to be translated with location update
-            raise Exception("Falha ao ler os dados da playlist")
+            raise Exception(tr("video.read_playlist_failed"))
 
         # filter plylist videos
         entries = info.get("entries")
@@ -334,7 +334,7 @@ class VideoInfo:
             # add video and video info to final list
             parsed.append({
                 "url": entry_url,
-                "title": e.get("title") or "(sem título)",
+                "title": e.get("title") or tr("common.untitled_entry"),
                 "id": e.get("id"),
                 "duration": e.get("duration"),
                 "thumbnail": thumb,
@@ -399,6 +399,7 @@ class PreviewDownloader:
                 command,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL,
                 creationflags=creationflags,
             )
             self.process.wait()

@@ -15,9 +15,11 @@
 
 import os
 import re
+import sys
 import requests
 import shutil
-from core.utils import get_ytdlp_path
+from core.i18n import tr
+from core.utils import get_ytdlp_path, get_ytdlp_update_path
 import subprocess
 
 """ This file is resposable to mantain the app version, and the path to check
@@ -30,10 +32,15 @@ import subprocess
   ================================================== """
 
 # url to get yt-dlp last version from official github
-YTDLP_DOWNLOAD_URL = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe"
+# (Windows: standalone .exe | others: "yt-dlp" zipapp, needs python3 installed)
+YTDLP_DOWNLOAD_URL = (
+    "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe"
+    if sys.platform == "win32" else
+    "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp"
+)
 
 # Get Media Free actual version
-APP_VERSION = "2.5.0"
+APP_VERSION = "2.6.0"
 # app oficial repo 
 GITHUB_REPO = "LuizHenriqueFreitas/Get-Media-Free"
 # github app releases api url
@@ -97,35 +104,58 @@ def check_app_update():
   ========================= """
 
 # as the name says, tha function download the lastest official ytdlp .exe
+# it's saved at get_ytdlp_update_path() (user folder when installed), never on
+# a system yt-dlp that get_ytdlp_path() could have found on PATH
 def download_latest_ytdlp():
-    ytdlp_path = get_ytdlp_path()
+    ytdlp_path = get_ytdlp_update_path()
+    os.makedirs(os.path.dirname(ytdlp_path), exist_ok=True)
     temp_path = ytdlp_path + ".new"
 
     response = requests.get(YTDLP_DOWNLOAD_URL, stream=True, timeout=30)
 
     if response.status_code != 200:
-        # that will need to be transtalet on location update
-        raise Exception("Falha ao baixar yt-dlp")
+        raise Exception(tr("updater.download_failed"))
 
     with open(temp_path, "wb") as f:
         for chunk in response.iter_content(chunk_size=8192):
             if chunk:
                 f.write(chunk)
 
+    if sys.platform != "win32":
+        os.chmod(temp_path, 0o755)
+
     return temp_path
 
 # this function replaces the old version for the new one
 def replace_binary_ytdlp(temp_path):
-    ytdlp_path = get_ytdlp_path()
+    ytdlp_path = get_ytdlp_update_path()
     backup_path = ytdlp_path + ".backup"
 
-    if os.path.exists(ytdlp_path):
-        shutil.move(ytdlp_path, backup_path)
+    # a leftover backup from an older update would block the move below
+    if os.path.exists(backup_path):
+        try:
+            os.remove(backup_path)
+        except OSError:
+            pass
 
-    shutil.move(temp_path, ytdlp_path)
+    # Windows can rename a running .exe (a download in progress) but not delete it
+    if os.path.exists(ytdlp_path):
+        os.replace(ytdlp_path, backup_path)
+
+    try:
+        shutil.move(temp_path, ytdlp_path)
+    except OSError:
+        # put the old one back, so yt-dlp keeps working
+        if os.path.exists(backup_path):
+            os.replace(backup_path, ytdlp_path)
+        raise
 
     if os.path.exists(backup_path):
-        os.remove(backup_path)
+        try:
+            os.remove(backup_path)
+        except OSError:
+            # still running: removed on the next update
+            pass
 
 """ This function implements the 2 other functinos above
     "download_lastest_ytdlp()" and "replace_binary_ytdlp()".
@@ -135,36 +165,36 @@ def check_and_update_ytdlp():
     try:
         temp_file = download_latest_ytdlp()
         replace_binary_ytdlp(temp_file)
-        # that will need to be transtalet on location update
-        return True, "yt-dlp atualizado com sucesso!"
+        return True, tr("updater.ytdlp_updated")
     except Exception as e:
-        # that will need to be transtalet on location update
-        return False, f"Error na atualização: {str(e)}"
+        return False, tr("updater.update_error", error=e)
 
 # that is just a getter, this function get the actual version of ytdlp - probably used on UI
 def get_installed_version_ytdlp():
     try:
         ytdlp_path = get_ytdlp_path()
 
-        import os
         if os.path.isabs(ytdlp_path) and not os.path.exists(ytdlp_path):
-                return "Not Found"
+                return tr("updater.not_found")
         
+        # CREATE_NO_WINDOW: without it a console window flashes at the packaged app
         result = subprocess.run(
             [ytdlp_path, "--version"],
             capture_output=True,
             text=True,
-            timeout = 10
+            timeout = 10,
+            stdin=subprocess.DEVNULL,
+            creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
         )
 
         if result.returncode == 0:
             return result.stdout.strip()
         else:
-            return f"Erro: {result.stderr.strip()}"
+            return tr("updater.version_error", error=result.stderr.strip())
 
     except FileNotFoundError as e:
-        return f"yt-dlp não encontrado: {e}"
+        return tr("updater.ytdlp_not_found", error=e)
     except subprocess.TimeoutExpired:
-        return "Timeout"
+        return tr("updater.timeout")
     except Exception as e:
-        return f"Erro inesperado: {str(e)}"
+        return tr("updater.unexpected_error", error=e)

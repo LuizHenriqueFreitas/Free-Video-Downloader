@@ -3,7 +3,8 @@
 #
 # yt-dlp, FFmpeg (ffmpeg + ffprobe) and Node.js are NOT Python packages here:
 # the app uses their executables (bundled on Windows at src/bin and src/tools,
-# or installed on the system). See README.md.
+# or installed on the system). On Windows, packaging/fetch_deps.ps1 downloads them.
+# See README.md.
 
 # app
 PySide6==6.11.1
@@ -11,3 +12,6 @@ requests==2.34.2
 
 # development / tests
 pytest==9.1.1
+
+# build (packaging/build.ps1)
+pyinstaller==6.22.3

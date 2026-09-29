@@ -1,0 +1,47 @@
+Get Media Free - third-party software
+=====================================
+
+Get Media Free is distributed under the MIT License (GetMediaFree_LICENSE.txt).
+The Windows build embeds the programs and libraries below. Each one keeps its
+own license; their full texts are in this folder.
+
+External programs (run unmodified, as separate processes)
+---------------------------------------------------------
+
+yt-dlp
+    License : The Unlicense (yt-dlp-LICENSE.txt)
+    Source  : https://github.com/yt-dlp/yt-dlp
+
+FFmpeg / FFprobe (essentials build by Gyan Doshi, https://www.gyan.dev/ffmpeg/builds/)
+    License : GNU GPL v3 (ffmpeg_LICENSE.txt) - the build includes libx264
+              and other GPL libraries, listed in ffmpeg_README.txt
+    Source  : version, binary and source links in ffmpeg_SOURCE.txt
+              https://ffmpeg.org/download.html
+              https://github.com/GyanD/codexffmpeg
+
+Node.js (node.exe, used by yt-dlp as JavaScript runtime)
+    License : MIT, plus the licenses of its bundled components (node_LICENSE.txt)
+    Source  : https://github.com/nodejs/node
+
+Libraries packed into the application
+-------------------------------------
+
+Python
+    License : Python Software Foundation License (python_LICENSE.txt)
+    Source  : https://www.python.org/downloads/source/
+
+Qt 6 / PySide6 / Shiboken6
+    License : GNU LGPL v3 (LGPL-3.0.txt), which extends the GNU GPL v3
+              (full GPL v3 text: ffmpeg_LICENSE.txt)
+    Source  : https://code.qt.io/  and  https://download.qt.io/official_releases/QtForPython/
+    The Qt and PySide6 libraries are shipped as separate DLL / .pyd files in
+    the "_internal" folder of the installation and can be replaced by the user
+    with compatible, modified versions.
+    Qt Multimedia ships its own FFmpeg libraries (avcodec, avformat, avutil,
+    swresample, swscale DLLs in _internal/PySide6), built by The Qt Company
+    under the GNU LGPL: https://code.qt.io/cgit/qt/qtmultimedia.git
+
+requests, urllib3, certifi, idna, charset-normalizer
+    Licenses: Apache-2.0, MIT, MPL-2.0, BSD-3-Clause, MIT
+    Full texts and notices in the python-packages folder.
+    Source  : https://pypi.org/

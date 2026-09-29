@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## 2026-29-09
+
+Packaging and installer.
+
+- User data (history, settings, cookies, thumbnails) moved to `%LOCALAPPDATA%\GetMediaFree`: the installed app doesn't need admin anymore. Data from the old `data` folder near the .exe is copied on the first run.
+- yt-dlp updates are saved at `%LOCALAPPDATA%\GetMediaFree\bin` (the install folder is read-only).
+- Faster downloads start: `--version` checks of yt-dlp and node are cached.
+- No console window flashing when reading the yt-dlp version.
+- Window and taskbar icon. New `icon.ico` made from the website artwork, with all Windows sizes (16 to 256 px) - it was 256 px only and looked blurry on the taskbar.
+- New `packaging/` folder: `fetch_deps.ps1` (Node 24 + FFmpeg 9 with SHA256 check), PyInstaller spec, Inno Setup installer and `build.ps1`.
+- Licenses: FFmpeg license fixed to GPLv3 (the build uses libx264), Qt/PySide6 (LGPLv3) and python packages added, `THIRD_PARTY_NOTICES.txt`.
+
+---
+
 ## 2026-23-08
 
 - Fix playlist download errors.

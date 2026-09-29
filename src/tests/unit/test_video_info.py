@@ -438,9 +438,9 @@ class TestParseError:
         ("ERROR: Confirm you're not a bot", "Bloqueado pelo youtube"),
         ("some CAPTCHA required", "Bloqueado pelo youtube"),
         ("HTTP Error 429: Too Many Requests", "Muitas tentativas"),
-        ("invalid cookies file provided", "Error com cookies"),
+        ("invalid cookies file provided", "Erro com cookies"),
         ("Unsupported URL: foo", "Link não suportado"),
-        ("This video is Private", "Video privado"),
+        ("This video is Private", "Vídeo privado"),
         ("ERROR: Sign in to confirm your age", "Login necessário"),
     ])
     def test_known_error_patterns(self, stderr, expected_substring):

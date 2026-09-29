@@ -10,10 +10,13 @@
 import sys
 import os
 import re
+import json
 import stat
 import shutil
 import subprocess
 import threading
+
+from core.i18n import tr
 
 """==========================
    Plataform filters
@@ -151,21 +154,57 @@ def resolve_unique_title(folder: str, title: str, format_type: str, reserved=Non
     USER DATA FOLDER (persistence)
    ========================== """
 
+# folder name used inside %LOCALAPPDATA% (Windows) / ~/.local/share (Linux)
+APP_DATA_FOLDER = "GetMediaFree"
+
+""" Return the app's writable base folder.
+    At development: src/
+    At executable: %LOCALAPPDATA%/GetMediaFree (Linux: ~/.local/share/GetMediaFree)
+    The .exe folder can't be used: installed at "Program Files" it's read-only
+    for normal users, so saving cookies/history there would fail.
+"""
+def get_app_data_dir():
+    if getattr(sys, 'frozen', False):
+        if sys.platform == "win32":
+            root = os.environ.get("LOCALAPPDATA") or os.path.join(os.path.expanduser("~"), "AppData", "Local")
+        else:
+            root = os.environ.get("XDG_DATA_HOME") or os.path.join(os.path.expanduser("~"), ".local", "share")
+        return os.path.join(root, APP_DATA_FOLDER)
+    # Dev mode: anchor to the "src" folder itself (same base used by
+    # resource_path()) instead of the process' cwd - otherwise
+    # cookies.txt/settings.json/history.json silently end up in a different
+    # "data" folder depending on where the app was launched from.
+    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+""" Old versions saved the user data at a 'data' folder near the .exe.
+    Copy it to the new place once (only when the new folder doesn't exist yet),
+    fixing the thumbnail paths saved inside history.json.
+"""
+def _migrate_legacy_data(data_dir):
+    legacy_dir = os.path.join(os.path.dirname(sys.executable), "data")
+    if not os.path.isdir(legacy_dir) or os.path.normcase(legacy_dir) == os.path.normcase(data_dir):
+        return
+    try:
+        shutil.copytree(legacy_dir, data_dir, ignore=shutil.ignore_patterns("temp"))
+        history = os.path.join(data_dir, "history.json")
+        if os.path.isfile(history):
+            with open(history, "r", encoding="utf-8") as f:
+                text = f.read()
+            # paths are stored JSON escaped (ex.: "C:\\app\\data\\...")
+            old, new = json.dumps(legacy_dir)[1:-1], json.dumps(data_dir)[1:-1]
+            with open(history, "w", encoding="utf-8") as f:
+                f.write(text.replace(old, new))
+    except (OSError, ValueError):
+        pass
+
 """ Return the directory where stay the user data (cookies, history, etc.)
     At development: src/data/
-    At executable: acessible on folder 'data', near the .exe
+    At executable: %LOCALAPPDATA%/GetMediaFree/data/ (see get_app_data_dir())
 """
 def get_user_data_dir():
-    if getattr(sys, 'frozen', False):
-        # Executable: uses .exe owne directory
-        base = os.path.dirname(sys.executable)
-    else:
-        # Dev mode: anchor to the "src" folder itself (same base used by
-        # resource_path() and get_ytdlp_path()) instead of the process' cwd -
-        # otherwise cookies.txt/settings.json/history.json silently end up in
-        # a different "data" folder depending on where the app was launched from.
-        base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    data_dir = os.path.join(base, "data")
+    data_dir = os.path.join(get_app_data_dir(), "data")
+    if getattr(sys, 'frozen', False) and not os.path.isdir(data_dir):
+        _migrate_legacy_data(data_dir)
     os.makedirs(data_dir, exist_ok=True)
     return data_dir
 
@@ -230,12 +269,83 @@ def resource_path(relative_path):
 
 """ Check bay resource_path() function if running on Windows,
     is the user is on Linux, exemple, he need to has localy installed
-    or get an exeption. 
+    or get an exeption.
     The same logic is apply to:
         get_ytdlp_path();
         get_ffmpeg_path();
         get_node_path();
 """
+
+# part of the "not found" messages: an installed user can't fix src/ folders
+def _missing_hint(dev_hint):
+    if getattr(sys, 'frozen', False):
+        return tr("utils.reinstall_hint")
+    return dev_hint
+
+""" ==========================
+    BINARY PROBES (cached)
+    "<binary> --version" is slow (the yt-dlp.exe takes ~1s to start) and was
+    called several times per download. The result is cached by path + file
+    size + modified time, so a replaced binary (ex.: yt-dlp update) is probed again.
+   ========================== """
+
+_probe_cache = {}
+_probe_lock = threading.Lock()
+
+# runs "<path> --version", returns (returncode, stdout) or None if it can't run
+def _run_version(path):
+    try:
+        creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+        result = subprocess.run(
+            [path, "--version"],
+            capture_output=True, text=True, timeout=15,
+            stdin=subprocess.DEVNULL,
+            creationflags=creationflags,
+        )
+        return result.returncode, result.stdout.strip()
+    except Exception:
+        return None
+
+def _cached_version(path):
+    try:
+        st = os.stat(path)
+    except OSError:
+        return _run_version(path)
+    key = (os.path.normcase(os.path.abspath(path)), st.st_size, st.st_mtime_ns)
+    with _probe_lock:
+        if key in _probe_cache:
+            return _probe_cache[key]
+    result = _run_version(path)
+    with _probe_lock:
+        _probe_cache[key] = result
+    return result
+
+
+""" ==========================
+    YT-DLP
+   ========================== """
+
+def _ytdlp_exe_name():
+    return "yt-dlp.exe" if sys.platform == "win32" else "yt-dlp"
+
+# yt-dlp shipped with the app (read-only when installed): src/bin/ or <bundle>/bin/
+def get_bundled_ytdlp_path():
+    return os.path.join(resource_path("bin"), _ytdlp_exe_name())
+
+""" Where the updater (services/updater.py) writes yt-dlp.
+    At executable: %LOCALAPPDATA%/GetMediaFree/bin/ - the install folder is
+    read-only (and at a --onefile build it's recreated on every run).
+    At development: the same src/bin/ file of get_bundled_ytdlp_path().
+"""
+def get_ytdlp_update_path():
+    return os.path.join(get_app_data_dir(), "bin", _ytdlp_exe_name())
+
+# yt-dlp version (ex.: "2026.08.19") or None if the binary doesn't run
+def _ytdlp_version(path):
+    result = _cached_version(path)
+    if not result or result[0] != 0:
+        return None
+    return result[1]
 
 # runs "<path> --version" to confirm the bundled binary actually executes on
 # this OS/arch before trusting it. Without this, a bin/yt-dlp(.exe) that is
@@ -243,49 +353,74 @@ def resource_path(relative_path):
 # Linux) gets returned as-is, and every caller crashes with an uncaught
 # OSError("Exec format error") instead of falling back to the system yt-dlp.
 def _ytdlp_binary_runs(path):
-    try:
-        creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
-        result = subprocess.run(
-            [path, "--version"],
-            capture_output=True, text=True, timeout=5,
-            creationflags=creationflags,
-        )
-        return result.returncode == 0
-    except Exception:
+    return _ytdlp_version(path) is not None
+
+# "2026.08.19" -> (2026, 8, 19)
+def _version_tuple(version):
+    return tuple(int(n) for n in re.findall(r"\d+", version or ""))
+
+_ytdlp_seed_lock = threading.Lock()
+_ytdlp_seeded = False
+
+""" Copy the bundled yt-dlp to the writable folder (once per app run), when
+    the copy is missing, broken, or older than the bundled one (a new app
+    version can ship a newer yt-dlp than the one updated there before).
+"""
+def _seed_ytdlp_copy(bundled, writable):
+    global _ytdlp_seeded
+    with _ytdlp_seed_lock:
+        if _ytdlp_seeded:
+            return
+        _ytdlp_seeded = True
+        if not os.path.isfile(bundled):
+            return
+        if os.path.isfile(writable):
+            current = _ytdlp_version(writable)
+            if current and _version_tuple(current) >= _version_tuple(_ytdlp_version(bundled)):
+                return
+        try:
+            os.makedirs(os.path.dirname(writable), exist_ok=True)
+            temp_path = writable + ".new"
+            shutil.copy2(bundled, temp_path)
+            os.replace(temp_path, writable)
+        except OSError:
+            # keep going with the bundled one
+            pass
+
+def _binary_usable(path):
+    if not os.path.exists(path):
         return False
+    return sys.platform == "win32" or os.access(path, os.X_OK)
 
 #Logic explained above
 def get_ytdlp_path():
+    bundled = get_bundled_ytdlp_path()
+    writable = get_ytdlp_update_path()
+    candidates = [bundled]
+    if os.path.normcase(writable) != os.path.normcase(bundled):
+        _seed_ytdlp_copy(bundled, writable)
+        # updated copy first
+        candidates.insert(0, writable)
+
+    for path in candidates:
+        if _binary_usable(path) and _ytdlp_binary_runs(path):
+            return path
+
+    yt_dlp = shutil.which(_ytdlp_exe_name())
+    if yt_dlp:
+        return yt_dlp
+
     if sys.platform == "win32":
-
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        bin_path = os.path.join(current_dir, "..", "bin", "yt-dlp.exe")
-        bin_path = os.path.normpath(bin_path)
-
-        if os.path.exists(bin_path) and _ytdlp_binary_runs(bin_path):
-            return bin_path
-
-        yt_dlp = shutil.which('yt-dlp.exe')
-        if yt_dlp:
-            return yt_dlp
         raise Exception(
-            f"yt-dlp não encontrado em: {bin_path}\n"
-            f"Verifique se o arquivo está em: src/bin/yt-dlp.exe"
+            tr("utils.ytdlp_not_found_at", path=bundled) + "\n"
+            + _missing_hint(tr("utils.ytdlp_dev_hint"))
         )
-    else:
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        bin_path = os.path.join(current_dir, "..", "bin", "yt-dlp")
-        bin_path = os.path.normpath(bin_path)
+    raise Exception(tr("utils.ytdlp_not_found_linux"))
 
-        if os.path.exists(bin_path) and os.access(bin_path, os.X_OK) and _ytdlp_binary_runs(bin_path):
-            return bin_path
 
-        yt_dlp = shutil.which('yt-dlp')
-        if yt_dlp:
-            return yt_dlp
-
-        # that need to be translated with location update
-        raise Exception("yt-dlp não encontrado. Instale com: pip install yt-dlp")
+""" ==========================
+    FFMPEG
+   ========================== """
 
 #Logic explained above
 def get_ffmpeg_path():
@@ -300,18 +435,21 @@ def get_ffmpeg_path():
             return ffmpeg
         # without ffmpeg yt-dlp doesn't merge video + audio (you get 2 files),
         # so it's better stop here with a clear message
-        # that need to be translated with location update
         raise Exception(
-            f"FFmpeg não encontrado em: {bin_dir}\n"
-            "Verifique se ffmpeg.exe e ffprobe.exe estão em: src/tools/ffmpeg/bin/"
+            tr("utils.ffmpeg_not_found_at", path=bin_dir) + "\n"
+            + _missing_hint(tr("utils.ffmpeg_dev_hint"))
         )
     else:
         ffmpeg = shutil.which('ffmpeg')
         if ffmpeg:
             return ffmpeg
 
-        # that need to be translated with location update
-        raise Exception("FFmpeg não encontrado. Instale com: sudo apt install ffmpeg")
+        raise Exception(tr("utils.ffmpeg_not_found_linux"))
+
+
+""" ==========================
+    NODE (yt-dlp JS runtime)
+   ========================== """
 
 # yt-dlp's JS challenge solver (used to resolve youtube signature/n-challenge)
 # refuses to run below this version, older node just silently fails to solve
@@ -322,16 +460,11 @@ NODE_MIN_MAJOR_VERSION = 22
 # returns True if the version could not be determined, so we don't block
 # on a candidate just because parsing failed
 def _node_version_supported(node_path):
+    result = _cached_version(node_path)
     try:
-        creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
-        result = subprocess.run(
-            [node_path, "--version"],
-            capture_output=True, text=True, timeout=5,
-            creationflags=creationflags,
-        )
-        major = int(result.stdout.strip().lstrip("v").split(".")[0])
+        major = int(result[1].lstrip("v").split(".")[0])
         return major >= NODE_MIN_MAJOR_VERSION
-    except Exception:
+    except (TypeError, IndexError, ValueError):
         return True
 
 #Logic explained above
@@ -365,18 +498,19 @@ def get_node_path():
             outdated_path = node
 
     if outdated_path:
-        # that need to be translated with location update
         raise Exception(
-            f"Node.js encontrado em '{outdated_path}' está desatualizado "
-            f"(precisa ser versão {NODE_MIN_MAJOR_VERSION} ou superior).\n"
-            "Linux: use nvm (https://github.com/nvm-sh/nvm) para instalar uma versão recente\n"
-            "Windows: baixe em https://nodejs.org/"
+            tr("utils.node_outdated", path=outdated_path, version=NODE_MIN_MAJOR_VERSION) + "\n"
+            + ("Windows: " + _missing_hint(tr("utils.node_outdated_windows_hint"))
+               if sys.platform == "win32" else
+               tr("utils.node_outdated_linux_hint"))
         )
 
-    # that need to be translated with location update
-    raise Exception(
-        "Node.js não encontrado!\n Linux: Instale com 'sudo apt install nodejs' ou use nvm"
-    )
+    if sys.platform == "win32":
+        raise Exception(
+            tr("utils.node_not_found") + "\n"
+            + _missing_hint(tr("utils.node_dev_hint"))
+        )
+    raise Exception(tr("utils.node_not_found") + "\n" + tr("utils.node_linux_hint"))
 
 
 """ ==========================
@@ -444,8 +578,7 @@ def get_ffprobe_exe():
     ffprobe = shutil.which("ffprobe")
     if ffprobe:
         return ffprobe
-    # that need to be translated with location update
-    raise Exception("FFprobe não encontrado. Ele deve ficar junto do ffmpeg.")
+    raise Exception(tr("utils.ffprobe_not_found"))
 
 
 """ ==========================
@@ -488,6 +621,7 @@ def _encoder_works(ffmpeg_exe, encoder_args):
     ]
     try:
         result = subprocess.run(command, capture_output=True, timeout=10,
+                                stdin=subprocess.DEVNULL,
                                 creationflags=creationflags)
         return result.returncode == 0
     except Exception:

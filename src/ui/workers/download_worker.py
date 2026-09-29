@@ -30,6 +30,7 @@ import time
 
 from PySide6.QtCore import QObject, Signal
 
+from core.i18n import tr
 from core.utils import (
     get_ffmpeg_path,
     get_ffmpeg_exe,
@@ -145,9 +146,9 @@ class DownloadWorker(QObject):
                     # cancelled: the "cancelled" signal was already emitted
                     if self._is_cancelled or self.item.status == "cancelled":
                         return
-                    # this will need to be translate on location update
                     detail = self._last_stderr.splitlines()[-1] if self._last_stderr else ""
-                    message = f"Falha no download (yt-dlp retornou erro): {detail}" if detail else "Falha no download (yt-dlp retornou erro)"
+                    message = (tr("worker.ytdlp_failed_detail", detail=detail) if detail
+                               else tr("worker.ytdlp_failed"))
                     raise Exception(message)
 
                 # without ffmpeg yt-dlp doesn't merge and leaves 2 files
@@ -166,8 +167,7 @@ class DownloadWorker(QObject):
 
             # check file path
             if not final_path or not os.path.exists(final_path):
-                # this will need to be translate on location update
-                raise Exception("Arquivo final não encontrado")
+                raise Exception(tr("worker.final_file_not_found"))
 
             # finish run process
             self.item.file_path = final_path
@@ -232,9 +232,9 @@ class DownloadWorker(QObject):
         # if error checker
         if not success:
             self._cleanup_pattern(tmp_pattern)
-            # this will need to be translate on location update
             detail = self._last_stderr.splitlines()[-1] if self._last_stderr else ""
-            message = f"Falha no download do vídeo completo: {detail}" if detail else "Falha no download do vídeo completo"
+            message = (tr("worker.full_video_failed_detail", detail=detail) if detail
+                       else tr("worker.full_video_failed"))
             raise Exception(message)
 
         # temporary full file verification
@@ -242,8 +242,7 @@ class DownloadWorker(QObject):
         full_files = [f for f in full_files if not f.endswith((".part", ".ytdl", ".temp"))]
         # if temp file was not found return an error
         if not full_files:
-            # this will need to be translate on location update
-            raise Exception("Arquivo temporário não encontrado")
+            raise Exception(tr("worker.temp_file_not_found"))
         full_path = max(full_files, key=os.path.getctime)
 
         # emit UI progress information
@@ -327,8 +326,7 @@ class DownloadWorker(QObject):
 
         if not cut_ok:
             self._remove_file(out_path)
-            # this will need to be translate on location update
-            raise Exception("ffmpeg falhou ao cortar o trecho")
+            raise Exception(tr("worker.cut_failed"))
 
         # final response is the final file path
         return out_path
@@ -389,8 +387,7 @@ class DownloadWorker(QObject):
 
         if not ok:
             self._remove_file(tmp_path)
-            # this will need to be translate on location update
-            raise Exception("Falha ao converter o vídeo para MP4 (H.264)")
+            raise Exception(tr("worker.convert_failed"))
 
         # replace the source by the converted file
         os.replace(tmp_path, final_path)
@@ -409,6 +406,7 @@ class DownloadWorker(QObject):
                  "-show_entries", "stream=codec_type,codec_name:format=duration",
                  "-of", "json", path],
                 capture_output=True, text=True, timeout=60,
+                stdin=subprocess.DEVNULL,
                 creationflags=creationflags,
             )
             if result.returncode != 0:
@@ -416,8 +414,7 @@ class DownloadWorker(QObject):
             data = json.loads(result.stdout or "{}")
         except Exception:
             if required:
-                # this will need to be translate on location update
-                raise Exception("Não foi possível analisar o arquivo baixado (ffprobe)")
+                raise Exception(tr("worker.probe_failed"))
             return info
 
         for stream in data.get("streams", []):
@@ -452,6 +449,7 @@ class DownloadWorker(QObject):
                 cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
+                stdin=subprocess.DEVNULL,
                 creationflags=creationflags,
             )
 
@@ -649,6 +647,7 @@ class DownloadWorker(QObject):
             stderr=subprocess.PIPE,
             text=True,
             bufsize=1,
+            stdin=subprocess.DEVNULL,
             creationflags=creationflags,
         )
 
@@ -786,8 +785,7 @@ class DownloadWorker(QObject):
             if re.match(r"^\.f\d[\w-]*\.\w+$", f[len(base):])
         ]
         if leftovers:
-            # this will need to be translate on location update
-            raise Exception("Falha ao juntar vídeo e áudio (FFmpeg não encontrado ou com erro)")
+            raise Exception(tr("worker.merge_failed"))
 
     # this function get the system file path
     def _find_downloaded_file(self):
@@ -805,7 +803,6 @@ class DownloadWorker(QObject):
             return max(files, key=os.path.getctime)
         # bad requesto on try returns empty -> ""
         except Exception as e:
-            # this will need to be translate on location update
             # is just a console debug message
-            print("Erro ao localizar arquivo:", e)
+            print("Failed to locate the downloaded file:", e)
             return ""
