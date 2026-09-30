@@ -46,12 +46,21 @@ from core.utils import (
     YOUTUBE_CLIENT_SETTINGS
 )
 
-""" yt-dlp format sort for MP4: 1st the highest resolution allowed by "-f",
-    then H.264 video and AAC audio when they exist on that resolution.
-    Without that yt-dlp prefers AV1/VP9 + Opus, that many players/editors
-    can't open (v1.0.0 promise: MP4 with H.264 + AAC).
+""" Original audio track only. Some youtube videos have dubbed audio tracks
+    (other languages); yt-dlp gives the original one the highest
+    "language_preference" (10, dubbed ones -1), and "lang" sorts by it.
+    It must be the 1st field: fields given with "-S" go before yt-dlp's
+    defaults, so "acodec:aac" alone could pick an AAC dub over an Opus-only
+    original. Videos with a single track are not affected.
 """
-MP4_FORMAT_SORT = "res,vcodec:h264,acodec:aac"
+AUDIO_FORMAT_SORT = "lang"
+
+""" yt-dlp format sort for MP4: original audio (see above), then the highest
+    resolution allowed by "-f", then H.264 video and AAC audio when they exist
+    on that resolution. Without that yt-dlp prefers AV1/VP9 + Opus, that many
+    players/editors can't open (v1.0.0 promise: MP4 with H.264 + AAC).
+"""
+MP4_FORMAT_SORT = f"{AUDIO_FORMAT_SORT},res,vcodec:h264,acodec:aac"
 
 """ Decode the source video on GPU when re-encoding ("-hwaccel auto").
     ffmpeg falls back to CPU decoding by itself when there's no GPU support.
@@ -59,6 +68,44 @@ MP4_FORMAT_SORT = "res,vcodec:h264,acodec:aac"
     that also happens on Windows, just turn it off here.
 """
 USE_HW_DECODE = True
+
+
+""" ===========================
+    AUDIO LANGUAGE (dubbed videos)
+    (pure functions - easy to test)
+  =========================== """
+
+# yt-dlp language codes: "pt", "en-US", "es-419", "zh-Hans"...
+# anything else is ignored, it goes inside the "-f" expression
+_LANGUAGE_CODE = re.compile(r"^[A-Za-z0-9-]+$")
+
+def _valid_language(language):
+    return bool(language) and bool(_LANGUAGE_CODE.match(language))
+
+""" MP4 format with the audio track of the chosen language.
+    Each "video+bestaudio" alternative is repeated first with
+    "bestaudio[language=xx]"; the original alternatives stay after them, so if
+    that language isn't available anymore yt-dlp downloads the original track
+    (AUDIO_FORMAT_SORT) instead of failing.
+    "bestvideo[height<=720]+bestaudio/best[height<=720]", "pt" ->
+    "bestvideo[height<=720]+bestaudio[language=pt]/bestvideo[height<=720]+bestaudio/best[height<=720]"
+"""
+def with_audio_language(video_format, language):
+    if not _valid_language(language):
+        return video_format
+    alternatives = video_format.split("/")
+    chosen = [
+        re.sub(r"\+bestaudio((?:\[[^\]]*\])*)",
+               lambda m: f"+bestaudio{m.group(1)}[language={language}]", alt)
+        for alt in alternatives if "+bestaudio" in alt
+    ]
+    return "/".join(chosen + alternatives)
+
+# MP3 format: the chosen language, or the original track if it doesn't exist
+def audio_format(language):
+    if not _valid_language(language):
+        return "bestaudio"
+    return f"bestaudio[language={language}]/bestaudio"
 
 
 """ ===========================
@@ -592,15 +639,19 @@ class DownloadWorker(QObject):
         if is_youtube(self.item.url):
             command += YOUTUBE_CLIENT_SETTINGS
 
+        # audio track language chosen by the user (None = original track)
+        language = getattr(self.item, "audio_language", None)
+
         # MP3 download command line
         if self.item.format_type.upper() == "MP3":
             if for_clip:
                 # if is a media clip donwload
-                command += ["-f", "bestaudio", "--no-keep-video"]
+                command += ["-f", audio_format(language), "-S", AUDIO_FORMAT_SORT, "--no-keep-video"]
             else:
                 # if is a full media audio download
                 command += [
-                    "-f", "bestaudio",
+                    "-f", audio_format(language),
+                    "-S", AUDIO_FORMAT_SORT,
                     "-x",
                     "--audio-format", "mp3",
                     "--audio-quality", "192K",
@@ -616,11 +667,13 @@ class DownloadWorker(QObject):
             else:
                 # auto best quality
                 video_format = "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best"
+            # audio track chosen on the audio language dialog (None = original)
+            video_format = with_audio_language(video_format, language)
 
             # ends yt-dlp command line
             command += [
                 "-f", video_format,
-                # prefer H.264 + AAC without lowering the resolution (see MP4_FORMAT_SORT)
+                # original audio, then H.264 + AAC without lowering the resolution (see MP4_FORMAT_SORT)
                 "-S", MP4_FORMAT_SORT,
                 "--merge-output-format", "mp4",
                 "--no-mtime",

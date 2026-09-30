@@ -73,6 +73,37 @@ def tr(key: str, lang=None, **kwargs) -> str:
 
 
 """ ==========================
+    AUDIO TRACK LANGUAGE NAMES
+  ========================== """
+
+""" Name of an audio track language (yt-dlp code) in the app language:
+    "pt" -> "Português" / "Portuguese". Order:
+    1. the exact code ("pt-BR", "es-419", "zh-Hans");
+    2. the base language + region ("de-AT" -> "Alemão (AT)");
+    3. yt-dlp's description of the track (english), without its tags;
+    4. the code itself.
+"""
+def audio_language_name(code, note="") -> str:
+    catalog = _CATALOGS[DEFAULT_LANGUAGE]
+    code = code or ""
+    key = f"audio_lang.{code.lower()}"
+    if key in catalog:
+        return tr(key)
+
+    base, _, region = code.partition("-")
+    base_key = f"audio_lang.{base.lower()}"
+    if base_key in catalog:
+        name = tr(base_key)
+        return f"{name} ({region.upper()})" if region else name
+
+    # ex.: "Tamil, medium" / "Klingon original (default), medium" -> "Tamil" / "Klingon"
+    described = (note or "").split(",")[0]
+    for tag in ("(default)", "original", "- dubbed"):
+        described = described.replace(tag, "")
+    return described.strip() or code
+
+
+""" ==========================
     LANGUAGE DETECTION
   ========================== """
 

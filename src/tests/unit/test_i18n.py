@@ -164,3 +164,32 @@ class TestResolveLanguage:
         self._installer(monkeypatch, None)
         self._system(monkeypatch, None)
         assert i18n.resolve_language(self._store(tmp_path)) == i18n.DEFAULT_LANGUAGE
+
+
+# ---------------------------------------------------------------------------
+# audio track language names
+# ---------------------------------------------------------------------------
+
+class TestAudioLanguageName:
+
+    @pytest.mark.parametrize("code, pt, en", [
+        ("pt", "Português", "Portuguese"),
+        ("en-US", "Inglês (EUA)", "English (US)"),
+        ("es-419", "Espanhol (América Latina)", "Spanish (Latin America)"),
+        ("zh-Hans", "Chinês (simplificado)", "Chinese (Simplified)"),
+    ])
+    def test_known_codes_in_app_language(self, code, pt, en):
+        i18n.set_language("pt_BR")
+        assert i18n.audio_language_name(code) == pt
+        i18n.set_language("en")
+        assert i18n.audio_language_name(code) == en
+
+    def test_unknown_region_uses_base_language(self):
+        i18n.set_language("pt_BR")
+        assert i18n.audio_language_name("de-AT") == "Alemão (AT)"
+
+    def test_unknown_language_uses_ytdlp_note(self):
+        assert i18n.audio_language_name("tlh", "Klingon original (default), medium") == "Klingon"
+
+    def test_unknown_language_without_note_uses_code(self):
+        assert i18n.audio_language_name("tlh") == "tlh"

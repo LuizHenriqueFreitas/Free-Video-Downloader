@@ -43,6 +43,7 @@ class FakeItem:
         self.overwrite = kwargs.get("overwrite", False)
         self.status = kwargs.get("status", "queued")
         self.file_path = kwargs.get("file_path", None)
+        self.audio_language = kwargs.get("audio_language", None)
 
 
 class FakeProcess:
@@ -143,15 +144,39 @@ class TestBuildDownloadCommand:
         idx = cmd.index("-f")
         assert cmd[idx + 1] == "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best"
 
-    def test_mp4_prefers_h264_aac_without_lowering_resolution(self, patched_utils):
+    def test_mp4_prefers_original_audio_then_h264_aac(self, patched_utils):
+        # "lang" 1st: original audio track wins over an AAC dubbed track
         worker = make_worker(format_type="MP4", url="https://vimeo.com/1")
         cmd = worker._build_download_command()
         idx = cmd.index("-S")
-        assert cmd[idx + 1] == "res,vcodec:h264,acodec:aac"
+        assert cmd[idx + 1] == "lang,res,vcodec:h264,acodec:aac"
 
-    def test_mp3_has_no_format_sort(self, patched_utils):
+    def test_mp3_prefers_original_audio(self, patched_utils):
         worker = make_worker(format_type="MP3", url="https://vimeo.com/1")
-        assert "-S" not in worker._build_download_command()
+        cmd = worker._build_download_command()
+        assert cmd[cmd.index("-S") + 1] == "lang"
+
+    def test_mp4_with_audio_language(self, patched_utils):
+        worker = make_worker(format_type="MP4", url="https://www.youtube.com/watch?v=abc",
+                             quality_id="bestvideo[height<=720]+bestaudio/best[height<=720]",
+                             audio_language="pt")
+        cmd = worker._build_download_command()
+        assert cmd[cmd.index("-f") + 1] == (
+            "bestvideo[height<=720]+bestaudio[language=pt]"
+            "/bestvideo[height<=720]+bestaudio/best[height<=720]"
+        )
+
+    def test_mp3_with_audio_language(self, patched_utils):
+        worker = make_worker(format_type="MP3", url="https://www.youtube.com/watch?v=abc",
+                             audio_language="es-419")
+        cmd = worker._build_download_command()
+        assert cmd[cmd.index("-f") + 1] == "bestaudio[language=es-419]/bestaudio"
+
+    def test_mp3_clip_with_audio_language(self, patched_utils):
+        worker = make_worker(format_type="MP3", url="https://www.youtube.com/watch?v=abc",
+                             audio_language="ja")
+        cmd = worker._build_download_command(for_clip=True)
+        assert cmd[cmd.index("-f") + 1] == "bestaudio[language=ja]/bestaudio"
 
     def test_percent_in_title_is_escaped_on_template(self, patched_utils):
         worker = make_worker(title="100% Brasil", output_path="/tmp/out")
@@ -1218,3 +1243,45 @@ class TestCancelledOnce:
         worker._emit_cancelled()
         worker._emit_cancelled()
         assert len(cancelled) == 1
+
+
+# ---------------------------------------------------------------------------
+# audio language (dubbed videos) - pure functions
+# ---------------------------------------------------------------------------
+
+class TestWithAudioLanguage:
+
+    def test_manual_quality(self):
+        assert dw.with_audio_language(
+            "bestvideo[height<=1080]+bestaudio/best[height<=1080]", "de"
+        ) == "bestvideo[height<=1080]+bestaudio[language=de]/bestvideo[height<=1080]+bestaudio/best[height<=1080]"
+
+    def test_keeps_existing_audio_filters(self):
+        assert dw.with_audio_language(
+            "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best", "en-US"
+        ) == (
+            "bestvideo[ext=mp4]+bestaudio[ext=m4a][language=en-US]/bestvideo+bestaudio[language=en-US]"
+            "/bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best"
+        )
+
+    def test_no_language_keeps_format(self):
+        assert dw.with_audio_language("bestvideo+bestaudio/best", None) == "bestvideo+bestaudio/best"
+
+    def test_invalid_language_is_ignored(self):
+        # it goes inside the "-f" expression: only letters, digits and "-"
+        assert dw.with_audio_language("bestvideo+bestaudio", "pt]/worst[") == "bestvideo+bestaudio"
+
+    def test_format_without_separate_audio(self):
+        assert dw.with_audio_language("best", "pt") == "best"
+
+
+class TestAudioFormat:
+
+    def test_language(self):
+        assert dw.audio_format("pt") == "bestaudio[language=pt]/bestaudio"
+
+    def test_no_language(self):
+        assert dw.audio_format(None) == "bestaudio"
+
+    def test_invalid_language(self):
+        assert dw.audio_format("a b") == "bestaudio"
