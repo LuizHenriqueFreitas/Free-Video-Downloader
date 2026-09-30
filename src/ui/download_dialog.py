@@ -67,11 +67,18 @@ from core.utils import (
     safe_filename, invalid_filename_chars, is_valid_filename, get_temp_dir
 )
 from ui.components.thumbnail_widget import ThumbnailWidget
+from ui.audio_language_dialog import AudioLanguageDialog, needs_audio_choice
 from models.download_item import DownloadItem
 from storage.settings_store import SettingsStore
 
 # load placeholder video image
 PLACEHOLDER = resource_path("assets/placeholder.png")
+
+""" Advanced mode (trimmer tool) is turned off for users: still unstable
+    (preview player + background threads crashed on some PCs). The code stays
+    so it can be studied and turned back on here.
+"""
+TRIMMER_ENABLED = False
 
 """ Every loading thread is registered with keep_thread() (services/thread_keeper.py):
     it keeps thread + worker alive until the thread really ends, without blocking
@@ -573,8 +580,13 @@ class DownloadDialog(QDialog):
             media duration must be known (the cut bar needs it).
             The preview is loaded later (see _start_preview_worker) and, if it fails,
             the trimmer still works with thumbnail + cut bar.
+            Turned off for now, see TRIMMER_ENABLED.
         """
-        can_trim = is_youtube(self._loading_url or "") and bool(info.get("duration"))
+        can_trim = (
+            TRIMMER_ENABLED
+            and is_youtube(self._loading_url or "")
+            and bool(info.get("duration"))
+        )
         if can_trim:
             self.advanced_check.show()
             if self.advanced_check.isChecked():
@@ -766,6 +778,9 @@ class DownloadDialog(QDialog):
             self.quality_selector.addItem(label, {
                 "quality_id": quality_id,
                 "filesize": f.get("filesize"),
+                # to recalculate the size with another audio language (see _confirm)
+                "video_filesize": f.get("video_filesize"),
+                "has_audio": f.get("has_audio", False),
                 "label": short_label,
                 "needs_conversion": needs_conversion,
             })
@@ -870,6 +885,16 @@ class DownloadDialog(QDialog):
                                     tr("dialog.invalid_clip_text"))
                 return
 
+        # more than one audio track (dubbed video): the user picks one language
+        audio_language = None
+        if needs_audio_choice(self.video_info):
+            audio_language = self._ask_audio_language()
+            if audio_language is None:
+                # cancelled: back to the download dialog
+                return
+            if fmt.upper() == "MP4" and isinstance(data, dict):
+                selected_filesize = self._size_with_audio(data, audio_language, selected_filesize)
+
         original_title = self.video_info.get("title") or tr("common.untitled")
         final_title = filename if filename else safe_filename(original_title)
 
@@ -915,9 +940,30 @@ class DownloadDialog(QDialog):
             clip_start=clip_start,
             clip_end=clip_end,
             overwrite=overwrite,
+            audio_language=audio_language,
         )
         self._results = [self.download_item]
         self.accept()
+
+    """ Audio language dialog (see ui/audio_language_dialog.py).
+        Returns the chosen yt-dlp language code, or None if cancelled.
+    """
+    def _ask_audio_language(self):
+        dialog = AudioLanguageDialog(self.video_info.get("audio_tracks") or [], self)
+        if not dialog.exec():
+            return None
+        return dialog.selected_language()
+
+    # MP4 size with the chosen audio language instead of the original one
+    # (the quality selector shows the size with the original track)
+    def _size_with_audio(self, quality_data, language, default):
+        if quality_data.get("has_audio"):
+            return default
+        video_size = quality_data.get("video_filesize")
+        audio_size = (self.video_info.get("audio_sizes") or {}).get(language)
+        if video_size is None or audio_size is None:
+            return default
+        return video_size + audio_size
 
     # items to download list - just 1 for unique content, N to youtube playlists
     def get_results(self):

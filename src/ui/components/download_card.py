@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import QPixmap
 from PySide6.QtCore import Qt
 
-from core.i18n import tr, SUPPORTED_LANGUAGES
+from core.i18n import tr, audio_language_name, SUPPORTED_LANGUAGES
 
 # progress bar colors: download (green) and conversion/cut after download (blue)
 DOWNLOAD_BAR_STYLE = "QProgressBar::chunk { background-color: #4CAF50; }"
@@ -283,8 +283,12 @@ class DownloadCard(QWidget):
             else:
                 size_text = f" • {size_mb:.1f} MB"
 
+        # audio language chosen on the audio language dialog (dubbed videos)
+        language = getattr(self.item, "audio_language", None)
+        language_text = f" • {audio_language_name(language)}" if language else ""
+
         # set info into UI 
-        self.meta_label.setText(f"{format_type} • {quality_text}{size_text}")
+        self.meta_label.setText(f"{format_type} • {quality_text}{language_text}{size_text}")
 
 
     """ ==========================

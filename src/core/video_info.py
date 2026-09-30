@@ -108,16 +108,18 @@ class VideoInfo:
         audio_formats.sort(key=lambda x: x.get("abr") or 0)
 
         """ For each resolution, pick the same tracks yt-dlp will download
-            (see "-S res,vcodec:h264,acodec:aac" at download_worker.py), so the size
+            (see "-S lang,res,vcodec:h264,acodec:aac" at download_worker.py), so the size
             shown on the dialog is the real download size:
               - video: H.264 (avc1) first, then fps, then bitrate;
-              - audio: AAC (mp4a) first, then bitrate - only if the video track
-                doesn't have audio already (other sites may deliver both together).
+              - audio: the original track (not a dub), then AAC (mp4a), then
+                bitrate - only if the video track doesn't have audio already
+                (other sites may deliver both together).
             HLS (m3u8) formats are skipped when there are direct ones: yt-dlp
             prefers direct https downloads. "-drc" youtube tracks go last,
             yt-dlp also leaves them as last option.
         """
         best_audio = self._pick_audio(audio_formats)
+        audio_tracks, audio_sizes = self._audio_tracks(audio_formats, duration)
 
         unique_video_formats = []
         for h in sorted({f.get("height") for f in video_formats}):
@@ -134,7 +136,8 @@ class VideoInfo:
             audio = None if has_audio else best_audio
 
             # total size = video + audio (None if some part is unknown)
-            filesize = self._estimate_size(video, duration)
+            video_filesize = self._estimate_size(video, duration)
+            filesize = video_filesize
             if filesize is not None and audio is not None:
                 audio_size = self._estimate_size(audio, duration)
                 filesize = filesize + audio_size if audio_size is not None else None
@@ -146,6 +149,10 @@ class VideoInfo:
                 "format_id": video.get("format_id"),
                 "audio_format_id": audio.get("format_id") if audio else None,
                 "filesize": filesize,
+                # video track only + whether it already has audio: the dialog
+                # adds the size of the audio language the user picks
+                "video_filesize": video_filesize,
+                "has_audio": has_audio,
                 # False = the site doesn't offer H.264 at this resolution, the
                 # download will need to be converted (see download_worker.py)
                 # None = the site doesn't inform the codec (can't know before)
@@ -176,6 +183,10 @@ class VideoInfo:
             "duration": info.get("duration"),
             "formats": unique_video_formats,
             "audio_formats": unique_audio_formats,
+            # one entry per audio language (dubbed youtube videos have many)
+            "audio_tracks": audio_tracks,
+            # language -> size of the audio track downloaded for it
+            "audio_sizes": audio_sizes,
             "raw_formats": formats,
         }
 
@@ -201,16 +212,52 @@ class VideoInfo:
         direct = [f for f in fmts if "m3u8" not in (f.get("protocol") or "")]
         return direct or fmts
 
-    # best audio track: AAC first, non "-drc", then bitrate
+    # yt-dlp "language_preference": 10 = original audio track, -1 = dubbed
+    # (or not informed - yt-dlp's own default)
+    @staticmethod
+    def _language_preference(f):
+        value = f.get("language_preference")
+        return value if value is not None else -1
+
+    # best audio track: original (not dubbed) first, then AAC, non "-drc",
+    # then bitrate - same order of "-S lang,...,acodec:aac" at download_worker.py
     def _pick_audio(self, audio_formats):
         if not audio_formats:
             return None
         candidates = self._prefer_direct(audio_formats)
         return max(candidates, key=lambda f: (
+            self._language_preference(f),
             (f.get("acodec") or "").startswith("mp4a"),
             not self._is_drc(f),
             f.get("abr") or 0,
         ))
+
+    """ Audio languages of the media: [{"language", "original", "note"}, ...],
+        original first. Formats without language (most sites) are ignored, so
+        a list with less than 2 entries means there's nothing to choose.
+        Also returns {language: size} of the track yt-dlp downloads for each one
+        (same choice of _pick_audio, restricted to that language).
+    """
+    def _audio_tracks(self, audio_formats, duration):
+        by_language = {}
+        for f in audio_formats:
+            language = f.get("language")
+            if language:
+                by_language.setdefault(language, []).append(f)
+
+        tracks, sizes = [], {}
+        for language, fmts in by_language.items():
+            best = self._pick_audio(fmts)
+            tracks.append({
+                "language": language,
+                "original": self._language_preference(best) >= 10,
+                # yt-dlp description, ex.: "English (US) original (default), medium"
+                "note": best.get("format_note") or "",
+            })
+            sizes[language] = self._estimate_size(best, duration)
+
+        tracks.sort(key=lambda t: not t["original"])
+        return tracks, sizes
 
     # track size in bytes: real size, yt-dlp approximation or bitrate * duration
     @staticmethod
@@ -365,8 +412,9 @@ class VideoInfo:
 class PreviewDownloader:
     """ "-S res:240": largest resolution up to 240p (or the smallest above),
         H.264 + AAC preferred, then the smallest bitrate - it's just a preview.
+        "lang" first: original audio track, not a dub (see download_worker.py).
     """
-    FORMAT_SORT = "res:240,vcodec:h264,acodec:aac,+br"
+    FORMAT_SORT = "lang,res:240,vcodec:h264,acodec:aac,+br"
 
     def __init__(self):
         self.process = None

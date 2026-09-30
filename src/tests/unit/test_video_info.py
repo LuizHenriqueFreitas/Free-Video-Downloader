@@ -737,7 +737,7 @@ class TestPreviewDownloader:
         cmd = captured["cmd"]
         assert cmd[0] == "/fake/yt-dlp"
         assert cmd[cmd.index("-f") + 1] == "bv*+ba/b"
-        assert cmd[cmd.index("-S") + 1] == "res:240,vcodec:h264,acodec:aac,+br"
+        assert cmd[cmd.index("-S") + 1] == "lang,res:240,vcodec:h264,acodec:aac,+br"
         assert "--no-playlist" in cmd
         assert "--cookies" in cmd
 
@@ -792,3 +792,58 @@ class TestPreviewDownloader:
             raise Exception("Node.js não encontrado")
         monkeypatch.setattr(vi, "get_node_path", raise_error)
         assert PreviewDownloader().download("https://vimeo.com/1", str(tmp_path), "preview_x") is None
+
+
+# ---------------------------------------------------------------------------
+# audio tracks (dubbed youtube videos)
+# ---------------------------------------------------------------------------
+
+def _audio(fid, language, pref, acodec="mp4a.40.2", abr=128, size=1000, note=""):
+    return {"vcodec": "none", "acodec": acodec, "ext": "m4a", "abr": abr,
+            "format_id": fid, "language": language, "language_preference": pref,
+            "filesize": size, "format_note": note}
+
+
+DUBBED_INFO = {
+    "duration": 10,
+    "formats": [
+        {"vcodec": "avc1.4d401f", "acodec": "none", "height": 720, "ext": "mp4",
+         "format_id": "136", "filesize": 5000},
+        _audio("140-0", "en-US", 10, size=1000, note="English (US) original (default), medium"),
+        _audio("251-0", "en-US", 10, acodec="opus", abr=160, size=1200),
+        # dub with higher bitrate: must not win over the original
+        _audio("140-1", "pt", -1, abr=256, size=3000, note="Portuguese, medium"),
+        _audio("140-2", "es", -1, size=900, note="Spanish, medium"),
+    ],
+}
+
+
+class TestAudioTracks:
+
+    def test_one_track_per_language_original_first(self):
+        result = VideoInfo()._format_response(DUBBED_INFO)
+        tracks = result["audio_tracks"]
+        assert [t["language"] for t in tracks][0] == "en-US"
+        assert {t["language"] for t in tracks} == {"en-US", "pt", "es"}
+        assert [t["original"] for t in tracks] == [True, False, False]
+
+    def test_size_uses_original_audio_not_dub(self):
+        result = VideoInfo()._format_response(DUBBED_INFO)
+        fmt = result["formats"][0]
+        assert fmt["audio_format_id"] == "140-0"
+        assert fmt["filesize"] == 5000 + 1000
+        assert fmt["video_filesize"] == 5000
+        assert fmt["has_audio"] is False
+
+    def test_audio_size_per_language(self):
+        result = VideoInfo()._format_response(DUBBED_INFO)
+        assert result["audio_sizes"] == {"en-US": 1000, "pt": 3000, "es": 900}
+
+    def test_single_language_has_nothing_to_choose(self):
+        info = {"formats": [_audio("140", "en", -1), _audio("251", "en", -1, acodec="opus")]}
+        assert len(VideoInfo()._format_response(info)["audio_tracks"]) == 1
+
+    def test_formats_without_language_are_ignored(self):
+        info = {"formats": [{"vcodec": "none", "acodec": "mp4a", "ext": "m4a",
+                             "abr": 128, "format_id": "a1"}]}
+        assert VideoInfo()._format_response(info)["audio_tracks"] == []
