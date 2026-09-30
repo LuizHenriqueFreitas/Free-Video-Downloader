@@ -13,6 +13,7 @@
 from collections import deque
 from threading import RLock
 from PySide6.QtCore import QThread
+from services.thread_keeper import keep_thread
 from ui.workers.download_worker import DownloadWorker
 
 """ About Logic implemented:
@@ -143,8 +144,8 @@ class DownloadService:
 
         # final cleanup of references when the thread actually terminates.
         thread.finished.connect(lambda: self._on_thread_finished(item.id))
-        thread.finished.connect(worker.deleteLater)
-        thread.finished.connect(thread.deleteLater)
+        # thread + worker kept alive until the thread really ends (see thread_keeper.py)
+        keep_thread(thread, worker)
 
         # thread start function
         thread.start()

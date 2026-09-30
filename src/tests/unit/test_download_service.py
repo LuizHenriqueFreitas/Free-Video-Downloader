@@ -108,6 +108,8 @@ class FakeWorkerFactory:
     def __init__(self):
         self.created = {}
         self.behaviors = {}
+        # (thread, objects) registered on services.thread_keeper.keep_thread
+        self.kept = []
 
     def register_behavior(self, item_id, behavior):
         self.behaviors[item_id] = behavior
@@ -134,6 +136,7 @@ def worker_factory(monkeypatch):
     factory = FakeWorkerFactory()
     monkeypatch.setattr(ds, "QThread", FakeThread)
     monkeypatch.setattr(ds, "DownloadWorker", factory)
+    monkeypatch.setattr(ds, "keep_thread", lambda thread, *objs: factory.kept.append((thread, objs)))
     return factory
 
 
@@ -268,8 +271,11 @@ class TestFinishedFlow:
         worker.finished.emit(item)
 
         assert thread.quit_called is True
-        assert thread.delete_later_called is True
-        assert worker.delete_later_called is True
+        # thread + worker are released by thread_keeper after the thread really
+        # ends - deleteLater() on them races with Python and aborts Qt
+        assert (thread, (worker,)) in worker_factory.kept
+        assert thread.delete_later_called is False
+        assert worker.delete_later_called is False
 
     def test_finished_processes_next_queued_item(self, service, worker_factory):
         items = [FakeItem(i) for i in range(1, 5)]

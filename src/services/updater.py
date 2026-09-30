@@ -40,7 +40,7 @@ YTDLP_DOWNLOAD_URL = (
 )
 
 # Get Media Free actual version
-APP_VERSION = "2.6.0"
+APP_VERSION = "2.6.2"
 # app oficial repo 
 GITHUB_REPO = "LuizHenriqueFreitas/Get-Media-Free"
 # github app releases api url

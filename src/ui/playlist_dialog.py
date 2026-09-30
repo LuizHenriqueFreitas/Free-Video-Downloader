@@ -37,6 +37,7 @@ from PySide6.QtGui import QPixmap
 from core.i18n import tr
 from models.download_item import DownloadItem
 from core.utils import resolve_unique_title, get_thumbnails_dir
+from services.thread_keeper import keep_thread
 from storage.settings_store import SettingsStore
 
 
@@ -187,7 +188,8 @@ class PlaylistDialog(QDialog):
         self._thumb_thread.started.connect(self._thumb_worker.run)
         self._thumb_worker.loaded.connect(self._on_thumb_loaded)
         self._thumb_worker.finished.connect(self._thumb_thread.quit)
-        self._thumb_thread.finished.connect(self._thumb_thread.deleteLater)
+        # kept until it really ends, even if the dialog is closed while loading
+        keep_thread(self._thumb_thread, self._thumb_worker)
         self._thumb_thread.start()
 
     # add thumbnail to list when load finished
