@@ -35,6 +35,7 @@ from services.updater import (
 from ui.components.download_card import DownloadCard
 from ui.download_dialog import DownloadDialog
 
+from services.thread_keeper import keep_thread
 from core.i18n import tr, get_language, LANGUAGE_NAMES, SUPPORTED_LANGUAGES
 from core.utils import get_cookies_path, cookies_exists, secure_cookies_file, clear_temp_dir
 from storage.settings_store import SettingsStore, ALLOWED_HISTORY_COUNTS
@@ -246,7 +247,7 @@ class MainWindow(QMainWindow):
         self._upd_thread.started.connect(self._upd_worker.run)
         self._upd_worker.finished.connect(self._on_updates_checked)
         self._upd_worker.finished.connect(self._upd_thread.quit)
-        self._upd_thread.finished.connect(self._upd_thread.deleteLater)
+        keep_thread(self._upd_thread, self._upd_worker)
         self._upd_thread.start()
 
     # return correct message after check update options available - create a UI component

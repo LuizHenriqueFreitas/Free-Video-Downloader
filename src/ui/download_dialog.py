@@ -59,6 +59,7 @@ from PySide6.QtCore import QTimer, QThread, QObject, Signal, Slot
 
 from core.i18n import tr
 from core.video_info import VideoInfo, PreviewDownloader
+from services.thread_keeper import keep_thread
 from core.utils import (
     resource_path, cookies_exists, looks_like_url,
     is_youtube, is_youtube_playlist,
@@ -72,16 +73,11 @@ from storage.settings_store import SettingsStore
 # load placeholder video image
 PLACEHOLDER = resource_path("assets/placeholder.png")
 
-""" Mantain all alive threads refence untill their end, without block the UI.
-    that avoid freezing (thread.wait() on main thread) and crash "QThread
-    destroyed while runnig" if dialog were closed.
+""" Every loading thread is registered with keep_thread() (services/thread_keeper.py):
+    it keeps thread + worker alive until the thread really ends, without blocking
+    the UI, even if the dialog is closed or another link is pasted meanwhile.
+    Never connect deleteLater() on them (see thread_keeper.py).
 """
-_LIVE_THREADS = set()
-
-# add new to live_threads set
-def _keep_thread(thread):
-    _LIVE_THREADS.add(thread)
-    thread.finished.connect(lambda: _LIVE_THREADS.discard(thread))
 
 
 """ =================================
@@ -512,9 +508,8 @@ class DownloadDialog(QDialog):
         self._worker.error.connect(self._on_video_error)
         self._worker.finished.connect(self._thread.quit)
         self._worker.error.connect(self._thread.quit)
-        self._thread.finished.connect(self._thread.deleteLater)
 
-        _keep_thread(self._thread)
+        keep_thread(self._thread, self._worker)
         self._thread.start()
 
     """ Again, i supose that should be on another file, maybe playlist service, 
@@ -523,23 +518,23 @@ class DownloadDialog(QDialog):
     """
     # playlist worker threads iniciator
     def _start_playlist_worker(self, url, request_id):
-        self._thread = QThread()
-        self._worker = PlaylistLoadWorker(url, request_id)
-        self._worker.moveToThread(self._thread)
+        thread = QThread()
+        worker = PlaylistLoadWorker(url, request_id)
+        worker.moveToThread(thread)
+        self._thread = thread
+        self._worker = worker
 
-        self._thread.started.connect(self._worker.run)
-        """ I will check this logic before translate that documentation commentaries
-        """
-        # Conexão direta ao slot (sem lambda): garante QueuedConnection correto
-        # entre a thread do worker e a thread principal (UI).
-        self._worker.finished.connect(self._on_playlist_loaded)
-        self._worker.error.connect(self._on_playlist_error)
-        self._worker.finished.connect(lambda *_: self._thread.quit())
-        self._worker.error.connect(lambda *_: self._thread.quit())
-        self._thread.finished.connect(self._thread.deleteLater)
+        thread.started.connect(worker.run)
+        # direct slots (no lambda): correct QueuedConnection between the
+        # worker thread and the main (UI) thread
+        worker.finished.connect(self._on_playlist_loaded)
+        worker.error.connect(self._on_playlist_error)
+        # quit THIS thread - self._thread may already be another request's
+        worker.finished.connect(thread.quit)
+        worker.error.connect(thread.quit)
 
-        _keep_thread(self._thread)
-        self._thread.start()
+        keep_thread(thread, worker)
+        thread.start()
 
     # clean UI video information
     def _reset_video_state(self):
@@ -670,13 +665,11 @@ class DownloadDialog(QDialog):
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
         worker.finished.connect(self._on_preview_loaded)
-        worker.finished.connect(lambda *_: thread.quit())
-        thread.finished.connect(thread.deleteLater)
-        # the worker object must live until the thread ends
-        thread.finished.connect(worker.deleteLater)
+        worker.finished.connect(thread.quit)
 
         self._preview_worker = worker
-        _keep_thread(thread)
+        # the worker object must live until the thread ends
+        keep_thread(thread, worker)
         thread.start()
 
     # preview download finished (path is None if it failed)
@@ -944,7 +937,7 @@ class DownloadDialog(QDialog):
     def _abandon_thread(self):
         """
         Desvincula a thread de carregamento atual sem bloquear a UI.
-        A thread continua viva (registrada em _LIVE_THREADS) até terminar
+        A thread continua viva (registrada por keep_thread) até terminar
         sozinha; seu resultado tardio é ignorado pelo request_id.
         """
         # invalida qualquer resultado em andamento

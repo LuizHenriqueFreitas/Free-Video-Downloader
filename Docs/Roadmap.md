@@ -66,6 +66,10 @@ Localization: the whole interface is available in Portuguese (Brazil) and Englis
 
 The installer asks the language and the app starts in it; it can also be changed later on the app ("Idioma" / "Language" selector, applied after a restart).
 
+trimmer preview player uses software decoding only (GPU decoding crashed the app on some video drivers when playing); native crashes are written to data/crash.log.
+
+v2.6.2: fixed the crash when opening the advanced mode - background threads (preview, video info, playlist, thumbnails, update check, downloads) were destroyed while still running; they are now released only after they really end (services/thread_keeper.py).
+
 
 ---
 

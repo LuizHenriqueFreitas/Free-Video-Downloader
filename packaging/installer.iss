@@ -3,7 +3,7 @@
 ; Packs the PyInstaller output (packaging/out/dist/GetMediaFree) into
 ; packaging/out/installer/GetMediaFree-<version>-Setup.exe
 ; Built by packaging/build.ps1, which passes the version read from
-; src/services/updater.py:  ISCC.exe /DAppVersion=2.6.0 packaging\installer.iss
+; src/services/updater.py:  ISCC.exe /DAppVersion=2.6.2 packaging\installer.iss
 ;
 ; Default install is per user, without admin (%LOCALAPPDATA%\Programs);
 ; the wizard lets the user choose "all users" (Program Files, asks admin).
