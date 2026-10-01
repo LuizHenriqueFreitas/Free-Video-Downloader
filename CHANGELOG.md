@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 ---
 
-## 2026-30-09
+## [v 2.6.5 - Oktoberfest] - 2026-30-09
 
 - Add Youtube audio track selector
 - Remove trimmer tool because it's very instable now
