@@ -4,6 +4,46 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [v 2.6.5 - Oktoberfest] - 2026-30-09
+
+- Add Youtube audio track selector
+- Remove trimmer tool because it's very instable now
+- build and compile v2.6.5 - Oktoberfest
+
+---
+
+## 2026-29-09
+
+Packaging and installer.
+
+- User data (history, settings, cookies, thumbnails) moved to `%LOCALAPPDATA%\GetMediaFree`: the installed app doesn't need admin anymore. Data from the old `data` folder near the .exe is copied on the first run.
+- yt-dlp updates are saved at `%LOCALAPPDATA%\GetMediaFree\bin` (the install folder is read-only).
+- Faster downloads start: `--version` checks of yt-dlp and node are cached.
+- No console window flashing when reading the yt-dlp version.
+- Window and taskbar icon. New `icon.ico` made from the website artwork, with all Windows sizes (16 to 256 px) - it was 256 px only and looked blurry on the taskbar.
+- New `packaging/` folder: `fetch_deps.ps1` (Node 24 + FFmpeg 9 with SHA256 check), PyInstaller spec, Inno Setup installer and `build.ps1`.
+- Licenses: FFmpeg license fixed to GPLv3 (the build uses libx264), Qt/PySide6 (LGPLv3) and python packages added, `THIRD_PARTY_NOTICES.txt`.
+
+---
+
+## 2026-23-08
+
+- Fix playlist download errors.
+- Fix dialog problens.
+- Fix advanced mode crash problems.
+
+---
+
+## 2026-28-07
+
+- New web site avaliable, full vibe coded just to provide a more simple space to user download the .exe - made with github API.
+
+Next steps:
+- fix tmp folder gaps.
+- change all folder path to relative.
+
+---
+
 ## 2026-27-07
 
 All files are beeing checked and documented in english.<br>

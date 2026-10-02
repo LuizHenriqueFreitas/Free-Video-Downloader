@@ -1,6 +1,14 @@
 Get-Media-Free
 |
-|-> licenses/                       -> dependecies licenses;
+|-> licenses/                       -> dependecies licenses (THIRD_PARTY_NOTICES.txt lists all);
+|
+|-> packaging/                      -> Windows build and installer;
+|   |-> fetch_deps.ps1              -> downloads node.exe, ffmpeg/ffprobe (and yt-dlp) checking SHA256;
+|   |-> GetMediaFree.spec           -> PyInstaller recipe (one folder, everything embedded);
+|   |-> installer.iss               -> Inno Setup installer script;
+|   |-> build.ps1                   -> runs everything: deps, tests, PyInstaller, installer;
+|   |-> make_icon.py                -> builds src/assets/icon.ico (all sizes) from website/assets/app-icon.png;
+|   |-> out/                        -> generated files (not versioned);
 |
 |-> Docs/                           -> Documentation files;
 |   |
@@ -55,7 +63,8 @@ Get-Media-Free
 |   |
 |   |-> assets/             -> program placeholder images be like.
 |   |
-|   |-> data/               -> mantain user data localy, like cookies.
+|   |-> data/               -> mantain user data localy, like cookies (dev mode only,
+|   |                          installed app uses %LOCALAPPDATA%/GetMediaFree/data).
 |   |
 |   |-> tests/              -> automated tests for the software.
 |   |
@@ -63,9 +72,9 @@ Get-Media-Free
 |   |
 |   |-> .github/            -> website github pages workflow settings.
 |   |
-|   |-> bin/                -> when developing, yt-dlp.exe stays here for exemple.
+|   |-> bin/                -> yt-dlp.exe and node/node.exe (packaging/fetch_deps.ps1).
 |   |
-|   |-> tools/              -> when developing, ffmpeg.exe and ffmprobe.exe stays here for exemple.
+|   |-> tools/              -> ffmpeg/bin/ffmpeg.exe and ffprobe.exe (packaging/fetch_deps.ps1).
 |   |
 |   |-> main.py             -> thats the main file, where the program runs.
 |

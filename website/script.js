@@ -247,20 +247,38 @@ function formatDate(dateString) {
     const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
     
     if (diffDays === 0) {
-        return 'Hoje';
+        return t('date.today');
     } else if (diffDays === 1) {
-        return 'Ontem';
+        return t('date.yesterday');
     } else if (diffDays < 7) {
-        return `${diffDays} dias atrás`;
+        return t('date.days', { n: diffDays });
     } else if (diffDays < 30) {
         const weeks = Math.floor(diffDays / 7);
-        return `${weeks} ${weeks === 1 ? 'semana' : 'semanas'} atrás`;
+        return weeks === 1 ? t('date.week') : t('date.weeks', { n: weeks });
     } else if (diffDays < 365) {
         const months = Math.floor(diffDays / 30);
-        return `${months} ${months === 1 ? 'mês' : 'meses'} atrás`;
+        return months === 1 ? t('date.month') : t('date.months', { n: months });
     } else {
         const years = Math.floor(diffDays / 365);
-        return `${years} ${years === 1 ? 'ano' : 'anos'} atrás`;
+        return years === 1 ? t('date.year') : t('date.years', { n: years });
+    }
+}
+
+/**
+ * Monta o conteúdo do botão de download (ícone + texto + selo), sem innerHTML
+ * para o nome do arquivo vindo da API
+ */
+function setDownloadButton(iconClass, text, withBadge) {
+    downloadBtn.textContent = '';
+    const icon = document.createElement('i');
+    icon.className = iconClass;
+    downloadBtn.appendChild(icon);
+    downloadBtn.appendChild(document.createTextNode(' ' + text + ' '));
+    if (withBadge) {
+        const badge = document.createElement('span');
+        badge.className = 'btn-badge';
+        badge.textContent = t('hero.free');
+        downloadBtn.appendChild(badge);
     }
 }
 
@@ -319,7 +337,7 @@ async function updateDownloadUI() {
             
             if (fallbackReleases) {
                 const totalDownloads = calculateTotalDownloadsAllReleases(fallbackReleases);
-                downloadCountEl.textContent = totalDownloads.toLocaleString('pt-BR');
+                downloadCountEl.textContent = totalDownloads.toLocaleString(numberLocale());
             }
             
             if (fallbackLatest) {
@@ -332,7 +350,7 @@ async function updateDownloadUI() {
                 }
             }
             
-            downloadBtn.innerHTML = '<i class="fas fa-exclamation-triangle"></i> Dados em cache (offline)';
+            setDownloadButton('fas fa-exclamation-triangle', t('hero.offline'), false);
             return;
         }
         
@@ -340,10 +358,10 @@ async function updateDownloadUI() {
         let totalDownloads = 0;
         if (allReleases) {
             totalDownloads = calculateTotalDownloadsAllReleases(allReleases);
-            downloadCountEl.textContent = totalDownloads.toLocaleString('pt-BR');
+            downloadCountEl.textContent = totalDownloads.toLocaleString(numberLocale());
         } else if (latestRelease) {
             totalDownloads = calculateTotalDownloadsSingleRelease(latestRelease);
-            downloadCountEl.textContent = totalDownloads.toLocaleString('pt-BR');
+            downloadCountEl.textContent = totalDownloads.toLocaleString(numberLocale());
         }
         
         // 2. Atualiza a VERSÃO (última release)
@@ -357,15 +375,11 @@ async function updateDownloadUI() {
             if (asset) {
                 downloadBtn.href = asset.browser_download_url;
                 downloadBtn.classList.remove('btn-disabled');
-                downloadBtn.innerHTML = `
-                    <i class="fas fa-windows"></i>
-                    Download para Windows (${asset.name})
-                    <span class="btn-badge">Grátis</span>
-                `;
+                setDownloadButton('fab fa-windows', t('hero.downloadFile', { file: asset.name }), true);
             } else {
                 downloadBtn.href = '#';
                 downloadBtn.classList.add('btn-disabled');
-                downloadBtn.innerHTML = '<i class="fas fa-exclamation-triangle"></i> Nenhum arquivo disponível';
+                setDownloadButton('fas fa-exclamation-triangle', t('hero.noFile'), false);
             }
         }
         
@@ -421,21 +435,11 @@ async function init() {
 // Aguarda o DOM carregar antes de iniciar
 document.addEventListener('DOMContentLoaded', init);
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+// Troca de idioma: refaz os textos dinâmicos (os dados vêm do cache, sem nova requisição)
+document.addEventListener('languagechange', () => {
+    updateStats();
+    updateDownloadUI();
+});
 
 
 // ============================================
@@ -445,15 +449,15 @@ document.addEventListener('DOMContentLoaded', init);
 // Configuração - Substitua pelos IDs dos seus vídeos
 const VIDEO_CONFIG = {
     'VIDEO_ID_1': {
-        title: 'Como baixar vídeos do YouTube',
+        titleKey: 'videos.v1.title',
         embed: 'https://www.youtube.com/embed/UBFU6iqUqi4'
     },
     'VIDEO_ID_2': {
-        title: 'Baixando Reels e Tiktoks',
+        titleKey: 'videos.v2.title',
         embed: 'https://www.youtube.com/embed/UBFU6iqUqi4'
     },
     'VIDEO_ID_3': {
-        title: 'Reportando bug e Erros',
+        titleKey: 'videos.v3.title',
         embed: 'https://www.youtube.com/embed/UBFU6iqUqi4'
     }
 };
@@ -476,7 +480,7 @@ function openVideo(videoId) {
     iframe.src = video.embed;
     iframe.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture';
     iframe.allowFullscreen = true;
-    iframe.title = video.title;
+    iframe.title = t(video.titleKey);
     
     // Adiciona ao container
     playerContainer.appendChild(iframe);
@@ -535,5 +539,159 @@ modal.addEventListener('click', function(e) {
 document.addEventListener('keydown', function(e) {
     if (e.key === 'Escape' && modal.classList.contains('active')) {
         closeVideo();
+    }
+});
+
+
+// ============================================
+// CARROSSEL DE SCREENSHOTS
+// ============================================
+
+class ScreenshotCarousel {
+    constructor() {
+        this.track = document.getElementById('carouselTrack');
+        this.prevBtn = document.getElementById('carouselPrev');
+        this.nextBtn = document.getElementById('carouselNext');
+        this.indicators = document.getElementById('carouselIndicators');
+        this.slides = this.track.querySelectorAll('.carousel-slide');
+        this.currentSlide = 0;
+        this.totalSlides = this.slides.length;
+        this.autoPlayInterval = null;
+        this.autoPlayDelay = 5000; // 5 segundos
+        this.isTransitioning = false;
+
+        this.init();
+    }
+
+    init() {
+        // Cria os indicadores (dots)
+        this.createIndicators();
+
+        // Screenshot ausente: painel neutro em vez de imagem quebrada (ver .is-missing)
+        this.slides.forEach(slide => {
+            const img = slide.querySelector('img');
+            if (!img) return;
+            const markMissing = () => slide.classList.add('is-missing');
+            img.addEventListener('error', markMissing);
+            if (img.complete && img.naturalWidth === 0 && img.getAttribute('src')) markMissing();
+        });
+        
+        // Adiciona event listeners
+        this.prevBtn.addEventListener('click', () => this.prevSlide());
+        this.nextBtn.addEventListener('click', () => this.nextSlide());
+        
+        // Navegação por teclado
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'ArrowLeft') this.prevSlide();
+            if (e.key === 'ArrowRight') this.nextSlide();
+        });
+        
+        // Pausa autoplay ao passar o mouse
+        this.track.addEventListener('mouseenter', () => this.pauseAutoPlay());
+        this.track.addEventListener('mouseleave', () => this.startAutoPlay());
+        
+        // Touch events para mobile
+        let touchStartX = 0;
+        let touchEndX = 0;
+        
+        this.track.addEventListener('touchstart', (e) => {
+            touchStartX = e.changedTouches[0].screenX;
+        }, { passive: true });
+        
+        this.track.addEventListener('touchend', (e) => {
+            touchEndX = e.changedTouches[0].screenX;
+            this.handleSwipe(touchStartX, touchEndX);
+        }, { passive: true });
+        
+        // Inicia o autoplay
+        this.startAutoPlay();
+        
+        // Atualiza a primeira posição
+        this.updateCarousel();
+    }
+
+    createIndicators() {
+        for (let i = 0; i < this.totalSlides; i++) {
+            const dot = document.createElement('button');
+            dot.className = 'carousel-dot';
+            dot.setAttribute('aria-label', t('screens.goto', { n: i + 1 }));
+            dot.dataset.index = i;
+            dot.addEventListener('click', () => this.goToSlide(i));
+            this.indicators.appendChild(dot);
+        }
+        // labels follow the site language
+        document.addEventListener('languagechange', () => {
+            this.indicators.querySelectorAll('.carousel-dot').forEach((dot, i) => {
+                dot.setAttribute('aria-label', t('screens.goto', { n: i + 1 }));
+            });
+        });
+    }
+
+    updateCarousel() {
+        // Atualiza a posição do track
+        this.track.style.transform = `translateX(-${this.currentSlide * 100}%)`;
+        
+        // Atualiza os dots
+        const dots = this.indicators.querySelectorAll('.carousel-dot');
+        dots.forEach((dot, index) => {
+            dot.classList.toggle('active', index === this.currentSlide);
+        });
+    }
+
+    goToSlide(index) {
+        if (this.isTransitioning || index === this.currentSlide) return;
+        if (index < 0) index = this.totalSlides - 1;
+        if (index >= this.totalSlides) index = 0;
+        
+        this.isTransitioning = true;
+        this.currentSlide = index;
+        this.updateCarousel();
+        
+        setTimeout(() => {
+            this.isTransitioning = false;
+        }, 500);
+    }
+
+    nextSlide() {
+        this.goToSlide(this.currentSlide + 1);
+    }
+
+    prevSlide() {
+        this.goToSlide(this.currentSlide - 1);
+    }
+
+    handleSwipe(startX, endX) {
+        const threshold = 50; // Distância mínima para considerar um swipe
+        const diff = startX - endX;
+        
+        if (Math.abs(diff) > threshold) {
+            if (diff > 0) {
+                this.nextSlide();
+            } else {
+                this.prevSlide();
+            }
+        }
+    }
+
+    startAutoPlay() {
+        if (this.autoPlayInterval) return;
+        this.autoPlayInterval = setInterval(() => {
+            this.nextSlide();
+        }, this.autoPlayDelay);
+    }
+
+    pauseAutoPlay() {
+        if (this.autoPlayInterval) {
+            clearInterval(this.autoPlayInterval);
+            this.autoPlayInterval = null;
+        }
+    }
+}
+
+// Inicializa o carrossel quando o DOM estiver carregado
+document.addEventListener('DOMContentLoaded', () => {
+    // Verifica se o carrossel existe na página
+    if (document.getElementById('carouselTrack')) {
+        new ScreenshotCarousel();
     }
 });

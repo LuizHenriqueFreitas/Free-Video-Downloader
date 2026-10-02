@@ -11,6 +11,8 @@ from PySide6.QtGui import QPixmap
 from PySide6.QtCore import Qt
 import os
 
+from core.i18n import tr
+
 
 class ThumbnailWidget(QWidget):
     def __init__(self, placeholder_path=None):
@@ -79,5 +81,4 @@ class ThumbnailWidget(QWidget):
                 return
 
         # final fallback - without image
-        # that will need to be translated on location update
-        self.label.setText("Sem imagem")
+        self.label.setText(tr("thumbnail.no_image"))

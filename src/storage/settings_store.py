@@ -3,6 +3,7 @@
 """ Here you will find:
     - History limiter get and set;
     - some UI settings about show warnings and auto-active trimm mode;
+    - UI language (chosen on the app and on the installer);
 """
 
 import json
@@ -15,6 +16,9 @@ DEFAULTS = {
     "advanced_mode": False,         # id true active trimm mode
     "skip_remove_confirm": False,   # skip history remove warning
     "skip_playlist_warning": False, # skip download playlist warning
+    "skip_conversion_warning": False, # skip "this quality needs conversion" warning
+    "language": None,               # UI language code (see core/i18n.py), None = not chosen yet
+    "installer_language": None,     # last language read from the installer (language.ini)
 }
 
 ALLOWED_HISTORY_COUNTS = (10, 20, 50)
@@ -92,6 +96,14 @@ class SettingsStore:
     def set_skip_playlist_warning(self, value: bool):
         self._set_bool("skip_playlist_warning", value)
 
+    # get actual config to conversion warning
+    def get_skip_conversion_warning(self) -> bool:
+        return self._get_bool("skip_conversion_warning", DEFAULTS["skip_conversion_warning"])
+
+    # set new default config to conversion warning
+    def set_skip_conversion_warning(self, value: bool):
+        self._set_bool("skip_conversion_warning", value)
+
     # get actual config to skip remove confirm
     def get_skip_remove_confirm(self) -> bool:
         return self._get_bool("skip_remove_confirm", DEFAULTS["skip_remove_confirm"])
@@ -99,6 +111,28 @@ class SettingsStore:
     # set new default config to skip remove confirm
     def set_skip_remove_confirm(self, value: bool):
         self._data["skip_remove_confirm"] = bool(value)
+        self._save()
+
+
+    """ ==========================
+            LANGUAGE
+      ========================== """
+    # get saved UI language code (None if never chosen)
+    def get_language(self):
+        return self._data.get("language")
+
+    # set new UI language code
+    def set_language(self, code):
+        self._data["language"] = code
+        self._save()
+
+    # get last language read from the installer
+    def get_installer_language(self):
+        return self._data.get("installer_language")
+
+    # set last language read from the installer
+    def set_installer_language(self, code):
+        self._data["installer_language"] = code
         self._save()
 
 

@@ -6,7 +6,7 @@
 import uuid, time
 
 class DownloadItem:
-    def __init__(self, url, title, original_title=None, format_type="MP4", quality="best", quality_id=None, thumbnail=None, status="pending", output_path=None, file_path=None, filesize=None, clip_start=None, clip_end=None, overwrite=False):
+    def __init__(self, url, title, original_title=None, format_type="MP4", quality="best", quality_id=None, thumbnail=None, status="pending", output_path=None, file_path=None, filesize=None, clip_start=None, clip_end=None, overwrite=False, audio_language=None):
         self.id = str(uuid.uuid4())
         self.url = url
         self.title = title          # file name
@@ -25,6 +25,9 @@ class DownloadItem:
         self.clip_end = clip_end
         # if True, replace the old file (--force-overwrites)
         self.overwrite = overwrite
+        # audio track language chosen by the user (yt-dlp code, ex.: "pt", "en-US")
+        # None = original track (single videos with one track, playlists, old history)
+        self.audio_language = audio_language
 
     def to_dict(self):
         return {
@@ -44,6 +47,7 @@ class DownloadItem:
             "clip_start": self.clip_start,
             "clip_end": self.clip_end,
             "overwrite": self.overwrite,
+            "audio_language": self.audio_language,
         }
 
     @classmethod
@@ -63,6 +67,7 @@ class DownloadItem:
             clip_start=data.get("clip_start"),
             clip_end=data.get("clip_end"),
             overwrite=data.get("overwrite", False),
+            audio_language=data.get("audio_language"),
         )
         item.id = data["id"]
         item.created_at = data.get("created_at", time.time())

@@ -43,6 +43,7 @@ class FakeItem:
         self.overwrite = kwargs.get("overwrite", False)
         self.status = kwargs.get("status", "queued")
         self.file_path = kwargs.get("file_path", None)
+        self.audio_language = kwargs.get("audio_language", None)
 
 
 class FakeProcess:
@@ -76,6 +77,9 @@ def patched_utils(monkeypatch, tmp_path):
 
     monkeypatch.setattr(dw, "get_ffmpeg_path", lambda: "/fake/ffmpeg/bin")
     monkeypatch.setattr(dw, "get_ffmpeg_exe", lambda: "/fake/ffmpeg/bin/ffmpeg")
+    monkeypatch.setattr(dw, "get_ffprobe_exe", lambda: "/fake/ffmpeg/bin/ffprobe")
+    # CPU encoder by default: no GPU detection during tests
+    monkeypatch.setattr(dw, "get_h264_video_args", lambda: list(dw.CPU_H264_ARGS))
     monkeypatch.setattr(dw, "get_ytdlp_path", lambda: "/fake/yt-dlp")
     monkeypatch.setattr(dw, "get_node_path", lambda: str(node_file))
     monkeypatch.setattr(dw, "get_cookies_path", lambda: "/fake/data/cookies.txt")
@@ -140,6 +144,45 @@ class TestBuildDownloadCommand:
         idx = cmd.index("-f")
         assert cmd[idx + 1] == "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best"
 
+    def test_mp4_prefers_original_audio_then_h264_aac(self, patched_utils):
+        # "lang" 1st: original audio track wins over an AAC dubbed track
+        worker = make_worker(format_type="MP4", url="https://vimeo.com/1")
+        cmd = worker._build_download_command()
+        idx = cmd.index("-S")
+        assert cmd[idx + 1] == "lang,res,vcodec:h264,acodec:aac"
+
+    def test_mp3_prefers_original_audio(self, patched_utils):
+        worker = make_worker(format_type="MP3", url="https://vimeo.com/1")
+        cmd = worker._build_download_command()
+        assert cmd[cmd.index("-S") + 1] == "lang"
+
+    def test_mp4_with_audio_language(self, patched_utils):
+        worker = make_worker(format_type="MP4", url="https://www.youtube.com/watch?v=abc",
+                             quality_id="bestvideo[height<=720]+bestaudio/best[height<=720]",
+                             audio_language="pt")
+        cmd = worker._build_download_command()
+        assert cmd[cmd.index("-f") + 1] == (
+            "bestvideo[height<=720]+bestaudio[language=pt]"
+            "/bestvideo[height<=720]+bestaudio/best[height<=720]"
+        )
+
+    def test_mp3_with_audio_language(self, patched_utils):
+        worker = make_worker(format_type="MP3", url="https://www.youtube.com/watch?v=abc",
+                             audio_language="es-419")
+        cmd = worker._build_download_command()
+        assert cmd[cmd.index("-f") + 1] == "bestaudio[language=es-419]/bestaudio"
+
+    def test_mp3_clip_with_audio_language(self, patched_utils):
+        worker = make_worker(format_type="MP3", url="https://www.youtube.com/watch?v=abc",
+                             audio_language="ja")
+        cmd = worker._build_download_command(for_clip=True)
+        assert cmd[cmd.index("-f") + 1] == "bestaudio[language=ja]/bestaudio"
+
+    def test_percent_in_title_is_escaped_on_template(self, patched_utils):
+        worker = make_worker(title="100% Brasil", output_path="/tmp/out")
+        cmd = worker._build_download_command()
+        assert cmd[cmd.index("-o") + 1] == os.path.join("/tmp/out", "100%% Brasil") + ".%(ext)s"
+
     def test_mp4_includes_merge_flags(self, patched_utils):
         worker = make_worker(format_type="MP4", url="https://vimeo.com/1")
         cmd = worker._build_download_command()
@@ -148,13 +191,33 @@ class TestBuildDownloadCommand:
         assert "--no-mtime" in cmd
         assert "--no-continue" in cmd
 
-    def test_mp4_youtube_url_includes_client_settings(self, patched_utils):
+    def test_mp4_youtube_url_includes_client_settings(self, patched_utils, monkeypatch):
+        # YOUTUBE_CLIENT_SETTINGS is empty today (see utils.py), a test value
+        # checks the rule "only for youtube links" is still working
+        monkeypatch.setattr(dw, "YOUTUBE_CLIENT_SETTINGS", ["--extractor-args", "youtube:test"])
         worker = make_worker(format_type="MP4", url="https://www.youtube.com/watch?v=abc")
         cmd = worker._build_download_command()
         assert "--extractor-args" in cmd
 
+    def test_youtube_without_client_settings_adds_nothing(self, patched_utils, monkeypatch):
+        monkeypatch.setattr(dw, "YOUTUBE_CLIENT_SETTINGS", [])
+        worker = make_worker(format_type="MP4", url="https://www.youtube.com/watch?v=abc")
+        cmd = worker._build_download_command()
+        assert "--extractor-args" not in cmd
+
     def test_mp4_non_youtube_excludes_client_settings(self, patched_utils):
         worker = make_worker(format_type="MP4", url="https://vimeo.com/1")
+        cmd = worker._build_download_command()
+        assert "--extractor-args" not in cmd
+
+    def test_mp3_youtube_url_includes_client_settings(self, patched_utils, monkeypatch):
+        monkeypatch.setattr(dw, "YOUTUBE_CLIENT_SETTINGS", ["--extractor-args", "youtube:test"])
+        worker = make_worker(format_type="MP3", url="https://www.youtube.com/watch?v=abc")
+        cmd = worker._build_download_command()
+        assert "--extractor-args" in cmd
+
+    def test_mp3_non_youtube_excludes_client_settings(self, patched_utils):
+        worker = make_worker(format_type="MP3", url="https://vimeo.com/1")
         cmd = worker._build_download_command()
         assert "--extractor-args" not in cmd
 
@@ -291,6 +354,30 @@ class TestRunYtdlpProcess:
         assert 50 not in progress
         assert progress == [10, 100]
 
+    def test_second_stream_resets_progress_instead_of_freezing(self, patched_utils, monkeypatch):
+        # download de MP4 padrão baixa video e audio como streams separados;
+        # a segunda stream reinicia em 0% e não pode ficar presa no valor
+        # máximo (99) atingido pela primeira - reproduz o bug da barra
+        # travando em 99% assim que o video termina e o audio começa
+        worker = make_worker()
+        progress = connect_capture(worker.progress)
+        lines = [
+            "[download] Destination: video.f137.mp4\n",
+            "[download]  50.0% of 5MiB\n",
+            "[download] 100.0% of 5MiB\n",
+            "[download] Destination: audio.f140.m4a\n",
+            "[download]  30.0% of 1MiB\n",
+            "[download] 100.0% of 1MiB\n",
+        ]
+        fake_proc = FakeProcess(stdout_lines=lines, returncode=0)
+        monkeypatch.setattr(dw.subprocess, "Popen", lambda *a, **k: fake_proc)
+
+        worker._run_ytdlp_process(["fake", "cmd"])
+        # a segunda stream deve emitir seu proprio 30% mesmo depois do
+        # primeiro stream ja ter chegado a 99
+        assert 30 in progress
+        assert progress == [50, 99, 30, 99, 100]
+
     def test_merging_formats_text_also_triggers_merge_state(self, patched_utils, monkeypatch):
         worker = make_worker()
         progress = connect_capture(worker.progress)
@@ -418,7 +505,7 @@ class TestRunClipStrategy:
         full_tmp.write_text("data")
 
         monkeypatch.setattr(worker, "_run_ytdlp_process", lambda cmd: True)
-        monkeypatch.setattr(worker, "_run_ffmpeg", lambda cmd: True)
+        monkeypatch.setattr(worker, "_run_ffmpeg", lambda cmd, *a: True)
 
         result = worker._run_clip_strategy()
 
@@ -456,29 +543,95 @@ class TestRunClipStrategy:
         with pytest.raises(Exception, match="Arquivo temporário não encontrado"):
             worker._run_clip_strategy()
 
-    def test_uses_fallback_ffmpeg_command_when_first_attempt_fails(self, patched_utils, monkeypatch, tmp_path):
+    def test_clip_is_reencoded_with_accurate_seek(self, patched_utils, monkeypatch, tmp_path):
+        # "-c copy" made the video start seconds after the audio (keyframes)
         item = FakeItem(title="clip video", output_path=str(tmp_path),
                          clip_start=1.0, clip_end=5.0, format_type="MP4")
         worker = make_worker(item)
-        full_tmp = tmp_path / "clip video__full_tmp.mp4"
-        full_tmp.write_text("data")
+        (tmp_path / "clip video__full_tmp.mp4").write_text("data")
+        monkeypatch.setattr(worker, "_run_ytdlp_process", lambda cmd: True)
 
+        calls = []
+        monkeypatch.setattr(worker, "_run_ffmpeg", lambda cmd, *a: calls.append((cmd, a)) or True)
+
+        worker._run_clip_strategy()
+
+        cmd, args = calls[0]
+        assert "copy" not in cmd
+        # "-ss" before "-i" and duration ("-t") instead of "-to"
+        assert cmd.index("-ss") < cmd.index("-i")
+        assert cmd[cmd.index("-t") + 1] == "4.000"
+        assert "-to" not in cmd
+        assert "libx264" in cmd and "aac" in cmd
+        assert cmd[cmd.index("-pix_fmt") + 1] == "yuv420p"
+        assert "-progress" in cmd
+        assert args == ("cut", 4.0)
+
+    def test_clip_without_start_has_no_seek(self, patched_utils, monkeypatch, tmp_path):
+        item = FakeItem(title="clip video", output_path=str(tmp_path),
+                         clip_start=None, clip_end=30.0, format_type="MP4")
+        worker = make_worker(item)
+        (tmp_path / "clip video__full_tmp.mp4").write_text("data")
+        monkeypatch.setattr(worker, "_run_ytdlp_process", lambda cmd: True)
+        calls = []
+        monkeypatch.setattr(worker, "_run_ffmpeg", lambda cmd, *a: calls.append(cmd) or True)
+
+        worker._run_clip_strategy()
+        assert "-ss" not in calls[0]
+        assert calls[0][calls[0].index("-t") + 1] == "30.000"
+
+    def test_gpu_failure_retries_on_cpu(self, patched_utils, monkeypatch, tmp_path):
+        gpu_args = ["-c:v", "h264_nvenc", "-pix_fmt", "yuv420p"]
+        monkeypatch.setattr(dw, "get_h264_video_args", lambda: list(gpu_args))
+        item = FakeItem(title="clip video", output_path=str(tmp_path),
+                         clip_start=1.0, clip_end=5.0, format_type="MP4")
+        worker = make_worker(item)
+        (tmp_path / "clip video__full_tmp.mp4").write_text("data")
         monkeypatch.setattr(worker, "_run_ytdlp_process", lambda cmd: True)
 
         calls = []
 
-        def fake_ffmpeg(cmd):
+        def fake_ffmpeg(cmd, *a):
             calls.append(cmd)
-            return len(calls) == 2  # falha na primeira, sucesso na segunda (fallback)
+            return len(calls) == 2  # GPU fails, CPU works
 
         monkeypatch.setattr(worker, "_run_ffmpeg", fake_ffmpeg)
-
         result = worker._run_clip_strategy()
 
         assert len(calls) == 2
-        assert "-c" in calls[0] and "copy" in calls[0]
-        assert "libx264" in calls[1]
+        assert "h264_nvenc" in calls[0] and "-hwaccel" in calls[0]
+        assert "libx264" in calls[1] and "-hwaccel" not in calls[1]
         assert result is not None
+
+    def test_cancel_during_gpu_does_not_retry(self, patched_utils, monkeypatch, tmp_path):
+        monkeypatch.setattr(dw, "get_h264_video_args", lambda: ["-c:v", "h264_nvenc"])
+        item = FakeItem(title="clip video", output_path=str(tmp_path),
+                         clip_start=1.0, clip_end=5.0, format_type="MP4")
+        worker = make_worker(item)
+        (tmp_path / "clip video__full_tmp.mp4").write_text("data")
+        monkeypatch.setattr(worker, "_run_ytdlp_process", lambda cmd: True)
+        calls = []
+
+        def fake_ffmpeg(cmd, *a):
+            calls.append(cmd)
+            worker._is_cancelled = True
+            return False
+
+        monkeypatch.setattr(worker, "_run_ffmpeg", fake_ffmpeg)
+        assert worker._run_clip_strategy() is None
+        assert len(calls) == 1
+
+    def test_title_with_brackets_finds_temp_file(self, patched_utils, monkeypatch, tmp_path):
+        # "[...]" is a glob pattern - the temp file must still be found
+        item = FakeItem(title="Song [Official Video]", output_path=str(tmp_path),
+                         clip_start=1.0, clip_end=5.0, format_type="MP4")
+        worker = make_worker(item)
+        (tmp_path / "Song [Official Video]__full_tmp.mp4").write_text("data")
+        monkeypatch.setattr(worker, "_run_ytdlp_process", lambda cmd: True)
+        monkeypatch.setattr(worker, "_run_ffmpeg", lambda cmd, *a: True)
+
+        result = worker._run_clip_strategy()
+        assert result == str(tmp_path / "Song [Official Video].mp4")
 
     def test_mp3_clip_does_not_attempt_fallback(self, patched_utils, monkeypatch, tmp_path):
         item = FakeItem(title="clip audio", output_path=str(tmp_path),
@@ -491,7 +644,7 @@ class TestRunClipStrategy:
 
         calls = []
 
-        def fake_ffmpeg(cmd):
+        def fake_ffmpeg(cmd, *a):
             calls.append(cmd)
             return False  # sempre falha
 
@@ -513,7 +666,7 @@ class TestRunClipStrategy:
         (tmp_path / "clip video.mp4").write_text("existing")
 
         monkeypatch.setattr(worker, "_run_ytdlp_process", lambda cmd: True)
-        monkeypatch.setattr(worker, "_run_ffmpeg", lambda cmd: True)
+        monkeypatch.setattr(worker, "_run_ffmpeg", lambda cmd, *a: True)
 
         result = worker._run_clip_strategy()
         assert result == str(tmp_path / "clip video (1).mp4")
@@ -527,7 +680,7 @@ class TestRunClipStrategy:
         (tmp_path / "clip video.mp4").write_text("existing")
 
         monkeypatch.setattr(worker, "_run_ytdlp_process", lambda cmd: True)
-        monkeypatch.setattr(worker, "_run_ffmpeg", lambda cmd: True)
+        monkeypatch.setattr(worker, "_run_ffmpeg", lambda cmd, *a: True)
 
         result = worker._run_clip_strategy()
         assert result == str(tmp_path / "clip video.mp4")
@@ -542,7 +695,7 @@ class TestRunClipStrategy:
 
         monkeypatch.setattr(worker, "_run_ytdlp_process", lambda cmd: True)
 
-        def fake_ffmpeg(cmd):
+        def fake_ffmpeg(cmd, *a):
             out_path.write_text("cut result")
             worker._is_cancelled = True
             return True
@@ -576,6 +729,8 @@ class TestRunDownload:
             return str(final_file)
 
         monkeypatch.setattr(worker, "_find_downloaded_file", fake_find)
+        # file already H.264 + AAC: nothing to convert
+        monkeypatch.setattr(worker, "_ensure_mp4_h264", lambda path: path)
 
         worker.run_download()
 
@@ -859,3 +1014,274 @@ class TestFindDownloadedFile:
         monkeypatch.setattr(dw.glob, "glob", raise_err)
         result = worker._find_downloaded_file()
         assert result == ""
+
+
+# ---------------------------------------------------------------------------
+# Merge leftovers / file finder with special characters (B03, B05)
+# ---------------------------------------------------------------------------
+
+class TestMergeAndFileFinder:
+
+    def test_leftover_streams_raise_error(self, patched_utils, tmp_path):
+        # yt-dlp without ffmpeg leaves "title.f137.mp4" + "title.f140.m4a"
+        (tmp_path / "video.f137.mp4").write_text("v")
+        (tmp_path / "video.f140.m4a").write_text("a")
+        worker = make_worker(title="video", output_path=str(tmp_path))
+        with pytest.raises(Exception, match="juntar"):
+            worker._check_merge_leftovers()
+
+    def test_no_leftovers_is_ok(self, patched_utils, tmp_path):
+        (tmp_path / "video.mp4").write_text("v")
+        (tmp_path / "video.final.mp4").write_text("other file")
+        worker = make_worker(title="video", output_path=str(tmp_path))
+        worker._check_merge_leftovers()
+
+    def test_find_file_with_brackets_and_percent(self, patched_utils, tmp_path):
+        # regression: "[test]" is a glob pattern, the file was never found
+        final = tmp_path / "Me at the zoo [test] 100%.mp4"
+        final.write_text("v")
+        worker = make_worker(title="Me at the zoo [test] 100%", output_path=str(tmp_path))
+        assert worker._find_downloaded_file() == str(final)
+
+    def test_find_file_ignores_converting_temp(self, patched_utils, tmp_path):
+        final = tmp_path / "video.webm"
+        final.write_text("v")
+        (tmp_path / "video.__converting.mp4").write_text("partial")
+        worker = make_worker(title="video", output_path=str(tmp_path))
+        assert worker._find_downloaded_file() == str(final)
+
+
+# ---------------------------------------------------------------------------
+# _ensure_mp4_h264 (B18) - every video file is .mp4 H.264 + AAC
+# ---------------------------------------------------------------------------
+
+class TestEnsureMp4H264:
+
+    def _setup(self, monkeypatch, tmp_path, name, vcodec, acodec, ffmpeg_results=(True,)):
+        src = tmp_path / name
+        src.write_text("source")
+        worker = make_worker(title="video", output_path=str(tmp_path))
+        monkeypatch.setattr(worker, "_probe_media",
+                            lambda path, required=True: {"vcodec": vcodec, "acodec": acodec, "duration": 60.0})
+        calls = []
+        results = list(ffmpeg_results)
+
+        def fake_ffmpeg(cmd, kind=None, total=None):
+            calls.append((cmd, kind, total))
+            ok = results.pop(0)
+            if ok:
+                # ffmpeg writes the output (last argument)
+                with open(cmd[-1], "w") as f:
+                    f.write("converted")
+            return ok
+
+        monkeypatch.setattr(worker, "_run_ffmpeg", fake_ffmpeg)
+        return worker, src, calls
+
+    def test_h264_aac_mp4_is_untouched(self, patched_utils, monkeypatch, tmp_path):
+        worker, src, calls = self._setup(monkeypatch, tmp_path, "video.mp4", "h264", "aac")
+        assert worker._ensure_mp4_h264(str(src)) == str(src)
+        assert calls == []
+
+    def test_vp9_mp4_is_converted_in_place(self, patched_utils, monkeypatch, tmp_path):
+        worker, src, calls = self._setup(monkeypatch, tmp_path, "video.mp4", "vp9", "aac")
+        result = worker._ensure_mp4_h264(str(src))
+        cmd, kind, total = calls[0]
+        assert result == str(src)
+        assert src.read_text() == "converted"
+        assert "libx264" in cmd and cmd[cmd.index("-c:a") + 1] == "copy"
+        assert "-progress" in cmd
+        assert (kind, total) == ("convert", 60.0)
+        assert not (tmp_path / "video.__converting.mp4").exists()
+
+    def test_webm_vp9_opus_becomes_mp4(self, patched_utils, monkeypatch, tmp_path):
+        worker, src, calls = self._setup(monkeypatch, tmp_path, "video.webm", "vp9", "opus")
+        result = worker._ensure_mp4_h264(str(src))
+        cmd = calls[0][0]
+        assert result == str(tmp_path / "video.mp4")
+        assert not src.exists()
+        assert "libx264" in cmd and "aac" in cmd
+
+    def test_h264_with_opus_only_converts_audio(self, patched_utils, monkeypatch, tmp_path):
+        worker, src, calls = self._setup(monkeypatch, tmp_path, "video.mkv", "h264", "opus")
+        worker._ensure_mp4_h264(str(src))
+        cmd = calls[0][0]
+        assert cmd[cmd.index("-c:v") + 1] == "copy"
+        assert "-hwaccel" not in cmd
+
+    def test_failure_raises_and_removes_temp(self, patched_utils, monkeypatch, tmp_path):
+        worker, src, _ = self._setup(monkeypatch, tmp_path, "video.webm", "vp9", "opus",
+                                     ffmpeg_results=(False,))
+        with pytest.raises(Exception, match="converter"):
+            worker._ensure_mp4_h264(str(src))
+        assert src.exists()
+        assert not (tmp_path / "video.__converting.mp4").exists()
+
+    def test_gpu_failure_retries_on_cpu(self, patched_utils, monkeypatch, tmp_path):
+        monkeypatch.setattr(dw, "get_h264_video_args", lambda: ["-c:v", "h264_amf", "-pix_fmt", "yuv420p"])
+        worker, src, calls = self._setup(monkeypatch, tmp_path, "video.webm", "vp9", "aac",
+                                         ffmpeg_results=(False, True))
+        assert worker._ensure_mp4_h264(str(src)) == str(tmp_path / "video.mp4")
+        assert "h264_amf" in calls[0][0] and "-hwaccel" in calls[0][0]
+        assert "libx264" in calls[1][0]
+
+    def test_cancel_returns_none(self, patched_utils, monkeypatch, tmp_path):
+        worker, src, _ = self._setup(monkeypatch, tmp_path, "video.webm", "vp9", "aac",
+                                     ffmpeg_results=(False,))
+        worker._is_cancelled = True
+        assert worker._ensure_mp4_h264(str(src)) is None
+
+    def test_mp3_download_is_not_converted(self, patched_utils, monkeypatch, tmp_path):
+        item = FakeItem(title="song", output_path=str(tmp_path), format_type="MP3")
+        worker = make_worker(item)
+        final = tmp_path / "song.mp3"
+        final.write_text("a")
+        monkeypatch.setattr(worker, "_build_download_command", lambda: ["cmd"])
+        monkeypatch.setattr(worker, "_run_ytdlp_process", lambda cmd: True)
+        monkeypatch.setattr(worker, "_find_downloaded_file", lambda: str(final))
+        called = []
+        monkeypatch.setattr(worker, "_ensure_mp4_h264", lambda p: called.append(p) or p)
+        worker.run_download()
+        assert called == []
+        assert item.status == "completed"
+
+
+# ---------------------------------------------------------------------------
+# ffmpeg progress (A03) - bar with time left
+# ---------------------------------------------------------------------------
+
+class TestFfmpegProgress:
+
+    def test_parse_progress_line(self):
+        assert dw._parse_progress_line("out_time_us=12500000\n") == ("out_time_us", "12500000")
+        assert dw._parse_progress_line("progress=end") == ("progress", "end")
+        assert dw._parse_progress_line("garbage") is None
+        assert dw._parse_progress_line("") is None
+
+    def test_estimate_waits_until_reliable(self):
+        assert dw._estimate_remaining(2, 0.5) is None      # less than 3s
+        assert dw._estimate_remaining(10, 0.01) is None    # less than 2%
+
+    def test_estimate_remaining(self):
+        # 50% done in 60s -> ~60s left
+        assert dw._estimate_remaining(60, 0.5) == pytest.approx(60)
+
+    def _run(self, monkeypatch, blocks, total, times):
+        worker = make_worker()
+        lines = []
+        for out_time, progress in blocks:
+            lines.append(f"out_time_us={out_time}\n".encode())
+            lines.append(f"progress={progress}\n".encode())
+        fake_proc = FakeProcess(stdout_lines=lines, returncode=0)
+        monkeypatch.setattr(dw.subprocess, "Popen", lambda *a, **k: fake_proc)
+        clock = iter(times)
+        monkeypatch.setattr(dw.time, "monotonic", lambda: next(clock))
+        emitted = []
+        worker.conversion_progress.connect(lambda *a: emitted.append(a))
+        ok = worker._run_ffmpeg(["ffmpeg"], "convert", total)
+        return ok, emitted
+
+    def test_emits_percent_and_time_left(self, patched_utils, monkeypatch):
+        # start at t=0; blocks at t=10 (25%) and t=20 (50%, end)
+        ok, emitted = self._run(monkeypatch,
+                                [(25_000_000, "continue"), (50_000_000, "end")],
+                                total=100, times=[0, 10, 20])
+        assert ok is True
+        assert emitted[0] == ("convert", 0, -1)          # first feedback: calculating
+        assert emitted[1][:2] == ("convert", 25)
+        assert emitted[1][2] == 30                        # 10s for 25% -> 30s left
+        assert emitted[2][:2] == ("convert", 50)
+
+    def test_updates_at_most_once_per_second(self, patched_utils, monkeypatch):
+        ok, emitted = self._run(monkeypatch,
+                                [(10_000_000, "continue"), (11_000_000, "continue"), (12_000_000, "continue")],
+                                total=100, times=[0, 5, 5.3, 5.6])
+        # initial + just one update (the other two came less than 1s later)
+        assert len(emitted) == 2
+
+    def test_unknown_duration_emits_minus_one(self, patched_utils, monkeypatch):
+        ok, emitted = self._run(monkeypatch, [(5_000_000, "end")], total=None, times=[0, 1])
+        assert all(e[1] == -1 for e in emitted)
+
+    def test_without_kind_emits_nothing(self, patched_utils, monkeypatch):
+        worker = make_worker()
+        fake_proc = FakeProcess(stdout_lines=[b"progress=end\n"], returncode=0)
+        monkeypatch.setattr(dw.subprocess, "Popen", lambda *a, **k: fake_proc)
+        emitted = []
+        worker.conversion_progress.connect(lambda *a: emitted.append(a))
+        assert worker._run_ffmpeg(["ffmpeg"]) is True
+        assert emitted == []
+
+
+# ---------------------------------------------------------------------------
+# cancelled emitted only once (B12)
+# ---------------------------------------------------------------------------
+
+class TestCancelledOnce:
+
+    def test_clip_cancel_during_download_emits_once(self, patched_utils, monkeypatch, tmp_path):
+        item = FakeItem(title="clip", output_path=str(tmp_path), clip_start=1.0, clip_end=5.0)
+        worker = make_worker(item)
+        cancelled = connect_capture(worker.cancelled)
+
+        # the real _run_ytdlp_process emits "cancelled" when cancelled
+        def fake_ytdlp(cmd):
+            worker._is_cancelled = True
+            worker._emit_cancelled()
+            return False
+
+        monkeypatch.setattr(worker, "_build_download_command", lambda **k: ["cmd"])
+        monkeypatch.setattr(worker, "_run_ytdlp_process", fake_ytdlp)
+        worker.run_download()
+
+        assert len(cancelled) == 1
+        assert item.status == "cancelled"
+
+    def test_emit_cancelled_is_idempotent(self, patched_utils):
+        worker = make_worker()
+        cancelled = connect_capture(worker.cancelled)
+        worker._emit_cancelled()
+        worker._emit_cancelled()
+        assert len(cancelled) == 1
+
+
+# ---------------------------------------------------------------------------
+# audio language (dubbed videos) - pure functions
+# ---------------------------------------------------------------------------
+
+class TestWithAudioLanguage:
+
+    def test_manual_quality(self):
+        assert dw.with_audio_language(
+            "bestvideo[height<=1080]+bestaudio/best[height<=1080]", "de"
+        ) == "bestvideo[height<=1080]+bestaudio[language=de]/bestvideo[height<=1080]+bestaudio/best[height<=1080]"
+
+    def test_keeps_existing_audio_filters(self):
+        assert dw.with_audio_language(
+            "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best", "en-US"
+        ) == (
+            "bestvideo[ext=mp4]+bestaudio[ext=m4a][language=en-US]/bestvideo+bestaudio[language=en-US]"
+            "/bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best"
+        )
+
+    def test_no_language_keeps_format(self):
+        assert dw.with_audio_language("bestvideo+bestaudio/best", None) == "bestvideo+bestaudio/best"
+
+    def test_invalid_language_is_ignored(self):
+        # it goes inside the "-f" expression: only letters, digits and "-"
+        assert dw.with_audio_language("bestvideo+bestaudio", "pt]/worst[") == "bestvideo+bestaudio"
+
+    def test_format_without_separate_audio(self):
+        assert dw.with_audio_language("best", "pt") == "best"
+
+
+class TestAudioFormat:
+
+    def test_language(self):
+        assert dw.audio_format("pt") == "bestaudio[language=pt]/bestaudio"
+
+    def test_no_language(self):
+        assert dw.audio_format(None) == "bestaudio"
+
+    def test_invalid_language(self):
+        assert dw.audio_format("a b") == "bestaudio"

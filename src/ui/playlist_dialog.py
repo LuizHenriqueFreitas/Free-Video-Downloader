@@ -24,6 +24,8 @@
     - playlist confirm download;
 """
 
+import os
+from uuid import uuid4
 import requests
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
@@ -32,9 +34,11 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QThread, QObject, Signal, QSize
 from PySide6.QtGui import QPixmap
 
-from src.models.download_item import DownloadItem
-from src.core.utils import resolve_unique_title
-from src.storage.settings_store import SettingsStore
+from core.i18n import tr
+from models.download_item import DownloadItem
+from core.utils import resolve_unique_title, get_thumbnails_dir
+from services.thread_keeper import keep_thread
+from storage.settings_store import SettingsStore
 
 
 # calculate video duration to show in UI
@@ -56,7 +60,10 @@ def _fmt_duration(seconds):
 ================================= """
 # load the thumbnaol at a separete thread
 class ThumbnailLoader(QObject):
-    loaded = Signal(int, QPixmap)
+    # index, preview icon, local file path (saved to disk so it survives into
+    # the download history — entry["thumbnail"] is just a remote URL and
+    # DownloadCard can only render a local file)
+    loaded = Signal(int, QPixmap, str)
     finished = Signal()
 
     def __init__(self, entries):
@@ -72,8 +79,16 @@ class ThumbnailLoader(QObject):
                     if r.status_code == 200:
                         pixmap = QPixmap()
                         pixmap.loadFromData(r.content)
-                        scaled = pixmap.scaled(80, 60, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-                        self.loaded.emit(idx, scaled)
+                        if not pixmap.isNull():
+                            video_id = entry.get("id") or str(uuid4())
+                            local_path = os.path.join(get_thumbnails_dir(), f"{video_id}.jpg")
+                            try:
+                                with open(local_path, "wb") as f:
+                                    f.write(r.content)
+                            except OSError:
+                                local_path = ""
+                            scaled = pixmap.scaled(80, 60, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                            self.loaded.emit(idx, scaled, local_path)
                 except Exception:
                     pass
         self.finished.emit()
@@ -92,8 +107,7 @@ class PlaylistDialog(QDialog):
         self._items = []
         self.settings = SettingsStore()
         self._thumbnails = {}
-        # that will need to be translated at location update
-        self.setWindowTitle("Baixar playlist")
+        self.setWindowTitle(tr("playlist.title"))
         self.setMinimumSize(700, 600)
 
         self._setup_ui()
@@ -104,18 +118,15 @@ class PlaylistDialog(QDialog):
         layout = QVBoxLayout(self)
 
         title = self.playlist.get("title", "Playlist")
-        # that will need to be translated at location update
-        header = QLabel(f"Playlist: {title}  ({len(self.entries)} vídeos)")
+        header = QLabel(tr("playlist.header", title=title, count=len(self.entries)))
         header.setStyleSheet("font-weight: bold; font-size: 14px;")
         layout.addWidget(header)
 
         # selection
         sel_bar = QHBoxLayout()
-        # that will need to be translated at location update
-        select_all = QPushButton("Selecionar todos")
+        select_all = QPushButton(tr("playlist.select_all"))
         select_all.clicked.connect(lambda: self._set_all(True))
-        # that will need to be translated at location update
-        clear_all = QPushButton("Limpar seleção")
+        clear_all = QPushButton(tr("playlist.clear_selection"))
         clear_all.clicked.connect(lambda: self._set_all(False))
         sel_bar.addWidget(select_all)
         sel_bar.addWidget(clear_all)
@@ -126,8 +137,7 @@ class PlaylistDialog(QDialog):
         self.list_widget = QListWidget()
         self.list_widget.setIconSize(QSize(80, 60))
         for entry in self.entries:
-            # that will need to be translated at location update
-            label = (entry.get("title") or "(sem título)") + _fmt_duration(entry.get("duration"))
+            label = (entry.get("title") or tr("common.untitled_entry")) + _fmt_duration(entry.get("duration"))
             item = QListWidgetItem(label)
             item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
             item.setCheckState(Qt.Checked)
@@ -137,32 +147,24 @@ class PlaylistDialog(QDialog):
 
         # format selection
         fmt_layout = QHBoxLayout()
-        # that will need to be translated at location update
-        fmt_layout.addWidget(QLabel("Formato:"))
+        fmt_layout.addWidget(QLabel(tr("common.format")))
         self.format_selector = QComboBox()
-        # that will need to be translated at location update
         self.format_selector.addItems(["MP4", "MP3"])
         fmt_layout.addWidget(self.format_selector)
         fmt_layout.addStretch()
         layout.addLayout(fmt_layout)
 
         # quality warning
-        # that will need to be translated at location update
-        self.quality_warning = QLabel(
-            "ℹ️ Os vídeos serão baixados na MELHOR QUALIDADE disponível (máx. 1080p) "
-            "com os nomes originais do YouTube."
-        )
+        self.quality_warning = QLabel(tr("playlist.quality_notice"))
         self.quality_warning.setStyleSheet("color: #666; font-size: 11px; padding: 5px; background: #f0f0f0; border-radius: 4px;")
         self.quality_warning.setWordWrap(True)
         layout.addWidget(self.quality_warning)
 
         # select destine folder
-        # that will need to be translated at location update
-        layout.addWidget(QLabel("Pasta de destino:"))
+        layout.addWidget(QLabel(tr("common.destination_folder")))
         path_layout = QHBoxLayout()
         self.path_input = QLineEdit()
-        # that will need to be translated at location update
-        path_button = QPushButton("Escolher pasta")
+        path_button = QPushButton(tr("common.choose_folder"))
         path_button.clicked.connect(self._choose_folder)
         path_layout.addWidget(self.path_input)
         path_layout.addWidget(path_button)
@@ -170,11 +172,9 @@ class PlaylistDialog(QDialog):
 
         # action buttons
         btns = QHBoxLayout()
-        # that will need to be translated at location update
-        cancel = QPushButton("Cancelar")
+        cancel = QPushButton(tr("common.cancel"))
         cancel.clicked.connect(self.reject)
-        # that will need to be translated at location update
-        ok = QPushButton("Baixar selecionados")
+        ok = QPushButton(tr("playlist.download_selected"))
         ok.clicked.connect(self._confirm)
         btns.addWidget(cancel)
         btns.addWidget(ok)
@@ -188,14 +188,17 @@ class PlaylistDialog(QDialog):
         self._thumb_thread.started.connect(self._thumb_worker.run)
         self._thumb_worker.loaded.connect(self._on_thumb_loaded)
         self._thumb_worker.finished.connect(self._thumb_thread.quit)
-        self._thumb_thread.finished.connect(self._thumb_thread.deleteLater)
+        # kept until it really ends, even if the dialog is closed while loading
+        keep_thread(self._thumb_thread, self._thumb_worker)
         self._thumb_thread.start()
 
     # add thumbnail to list when load finished
-    def _on_thumb_loaded(self, index, pixmap):
+    def _on_thumb_loaded(self, index, pixmap, local_path):
         if index < self.list_widget.count():
             item = self.list_widget.item(index)
             item.setIcon(pixmap)
+        if local_path:
+            self._thumbnails[index] = local_path
 
     # select all button - set all itens as checked
     def _set_all(self, checked):
@@ -205,8 +208,7 @@ class PlaylistDialog(QDialog):
 
     # choose folder button
     def _choose_folder(self):
-        # that will need to be translated at location update
-        folder = QFileDialog.getExistingDirectory(self, "Escolher pasta")
+        folder = QFileDialog.getExistingDirectory(self, tr("common.choose_folder"))
         if folder:
             self.path_input.setText(folder)
 
@@ -216,20 +218,11 @@ class PlaylistDialog(QDialog):
             return True
 
         msg = QMessageBox(self)
-        # that will need to be translated at location update
-        msg.setWindowTitle("Download da playlist")
+        msg.setWindowTitle(tr("playlist.warning_title"))
         msg.setIcon(QMessageBox.Information)
-        # that will need to be translated at location update
-        msg.setText(
-            "📋 **Atenção ao baixar a playlist**\n\n"
-            "• Todos os vídeos serão baixados na **melhor qualidade disponível até 1080p**\n"
-            "• Os nomes originais do YouTube serão preservados\n"
-            "• Vídeos em 4K/8K serão convertidos para 1080p para economizar espaço\n\n"
-            "Deseja continuar?"
-        )
+        msg.setText(tr("playlist.warning_text"))
 
-        # that will need to be translated at location update
-        dont_ask = QCheckBox("Não mostrar esta mensagem novamente")
+        dont_ask = QCheckBox(tr("common.dont_show_again"))
         msg.setCheckBox(dont_ask)
         msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
         msg.setDefaultButton(QMessageBox.Yes)
@@ -245,38 +238,37 @@ class PlaylistDialog(QDialog):
     def _confirm(self):
         folder = self.path_input.text().strip()
         if not folder:
-            # that will need to be translated at location update
-            QMessageBox.warning(self, "Erro", "Escolha a pasta de destino.")
+            QMessageBox.warning(self, tr("common.error"), tr("playlist.choose_folder_first"))
             return
 
         fmt = self.format_selector.currentText()
         selected = []
-        # add each selected video url to a list
+        # add each selected video url to a list (keep its list index, so we
+        # can later match it back to the thumbnail already downloaded by
+        # ThumbnailLoader for that same row)
         for i in range(self.list_widget.count()):
             it = self.list_widget.item(i)
             if it.checkState() == Qt.Checked:
                 entry = it.data(Qt.UserRole)
                 if entry.get("url"):
-                    selected.append(entry)
+                    selected.append((i, entry))
 
         # check if leastways one was selected
         if not selected:
-            # that will need to be translated at location update
-            QMessageBox.warning(self, "Erro", "Selecione ao menos um vídeo.")
+            QMessageBox.warning(self, tr("common.error"), tr("playlist.select_at_least_one"))
             return
 
         # show quality warning
         if not self._show_playlist_warning():
             return
-        
+
         used_titles = set()
         items = []
-        for entry in selected:
-            # that will need to be translated at location update
+        for index, entry in selected:
             base_title = entry.get("title") or "video"
-            title = resolve_unique_title(folder, base_title, fmt)
-            while title in used_titles:
-                title = resolve_unique_title(folder, title + " ", fmt)
+            # used_titles: names of the videos above in this same playlist, so two videos
+            # with the same title (ex.: "[Private video]") get "title" and "title (1)"
+            title = resolve_unique_title(folder, base_title, fmt, reserved=used_titles)
             used_titles.add(title)
 
             quality_id = None
@@ -284,15 +276,16 @@ class PlaylistDialog(QDialog):
                 quality_id = "bestvideo[height<=1080]+bestaudio/best[height<=1080]"
 
             # add videos to be downloaded by items list
+            # thumbnail here must be a local file: DownloadCard reads it with
+            # os.path.exists()/QPixmap, entry["thumbnail"] is just a remote URL
             items.append(DownloadItem(
                 url=entry["url"],
                 title=title,
                 original_title=base_title,
                 format_type=fmt,
-                # that will need to be translated at location update
-                quality="Melhor qualidade (até 1080p)",
+                quality=tr("playlist.best_quality_label"),
                 quality_id=quality_id,
-                thumbnail=entry.get("thumbnail"),
+                thumbnail=self._thumbnails.get(index),
                 status="pending",
                 output_path=folder,
             ))

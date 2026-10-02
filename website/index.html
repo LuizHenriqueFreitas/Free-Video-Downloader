@@ -4,7 +4,12 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Get Media Free - Baixe conteúdo de graça</title>
+    <title>Get Media Free - Baixe vídeos e músicas de graça</title>
+    <meta name="description" content="Baixe vídeos e músicas do YouTube, Instagram, TikTok e outras redes em MP4 H.264 pronto para edição ou MP3. Grátis, open-source e sem telemetria." />
+    <link rel="icon" href="assets/app-icon.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=IBM+Plex+Mono:wght@500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" />
     <link rel="stylesheet" href="style.css" />
     <!-- Font Awesome para ícones -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" />
@@ -16,15 +21,23 @@
         <div class="container header-container">
             <div class="logo">
                 <a href="#" class="logo-link">
-                    <i class="fas fa-download"></i>
+                    <img src="assets/app-icon.png" alt="" class="logo-icon" />
                     <span>Get Media Free</span>
                 </a>
             </div>
-            <nav class="nav">
-                <a href="#features">Funcionalidades</a>
-                <a href="#videos">Vídeos</a>
-                <a href="#about">Sobre</a>
-            </nav>
+            <div class="header-right">
+                <nav class="nav">
+                    <a href="#features" data-i18n="nav.features">Funcionalidades</a>
+                    <a href="#screenshots" data-i18n="nav.screenshots">Imagens</a>
+                    <a href="#videos" data-i18n="nav.videos">Vídeos</a>
+                    <a href="#about" data-i18n="nav.about">Sobre</a>
+                </nav>
+                <!-- SELETOR DE IDIOMA (apenas Português / English) -->
+                <div class="lang-switch" role="group" aria-label="Idioma do site" data-i18n-attr="aria-label:nav.language">
+                    <button type="button" class="lang-option active" data-lang="pt" aria-pressed="true" title="Português">PT</button>
+                    <button type="button" class="lang-option" data-lang="en" aria-pressed="false" title="English">EN</button>
+                </div>
+            </div>
         </div>
     </header>
 
@@ -34,17 +47,15 @@
             <div class="hero-content">
                 <h1 class="hero-title">
                     <span class="highlight">Get Media Free</span>
-                    <img src="app-icon.png" alt="Get Media Free Icon" class="app-icon">
+                    <img src="assets/app-icon.png" alt="Get Media Free Icon" class="app-icon">
                 </h1>
-                <p class="hero-subtitle">
-                    Baixe conteúdo de graça em diversas redes sociais.
-                    <br />
-                    Totalmente local no seu PC
-                    <span class="badge">SEM NENHUMA TELEMETRIA</span>
+                <p class="hero-subtitle" data-i18n-html="hero.subtitle">
+                    Baixe conteúdo de graça das principais redes sociais.<br />
+                    Tudo roda no seu PC <span class="badge">sem telemetria</span>
                 </p>
-                <p class="hero-description">
-                    Faça o download de vídeos músicas em MÁXIMA QUALIDADE das principais
-                    plataformas com um clique. Rápido, seguro e 100% gratuito.
+                <p class="hero-description" data-i18n="hero.description">
+                    Vídeos em MP4 H.264 pronto para edição ou músicas em MP3, na máxima qualidade
+                    disponível. Rápido, seguro e 100% gratuito.
                 </p>
 
                 <!-- ÁREA DE DOWNLOAD -->
@@ -52,32 +63,37 @@
                     <div class="download-info">
                         <span class="download-count">
                             <i class="fas fa-cloud-download-alt"></i>
-                            <span id="downloadCount">0</span> downloads registrados
+                            <span id="downloadCount">0</span> <span data-i18n="hero.downloads">downloads registrados</span>
                         </span>
                         <span class="version-info">
-                            Última versão: <strong id="versionTag">v1.0.0</strong>
+                            <span data-i18n="hero.version">Última versão:</span> <strong id="versionTag">v1.0.0</strong>
                         </span>
                     </div>
                     <a id="downloadBtn" href="#" class="btn btn-download">
-                        <i class="fas fa-windows"></i>
-                        Download para Windows
-                        <span class="btn-badge">Grátis</span>
+                        <i class="fab fa-windows"></i>
+                        <span data-i18n="hero.download">Download para Windows</span>
+                        <span class="btn-badge" data-i18n="hero.free">Grátis</span>
                     </a>
+                    <ul class="format-tags">
+                        <li>MP4 · H.264 + AAC</li>
+                        <li>MP3 · 192 kbps</li>
+                        <li>Windows 10 / 11</li>
+                    </ul>
                 </div>
             </div>
 
             <!-- ILUSTRAÇÃO / IMAGEM DESTAQUE -->
             <div class="hero-image">
                 <div class="hero-illustration">
-                    <i class="fas fa-download fa-6x"></i>
-                    <div class="floating-icons">
-                        <a href="https://github.com/LuizHenriqueFreitas/Free-Video-Downloader.git">
+                    <img src="assets/app-icon.png" alt="" class="hero-illustration-icon" />
+                    <div class="floating-icons" aria-label="Redes do projeto" data-i18n-attr="aria-label:hero.social">
+                        <a href="https://github.com/LuizHenriqueFreitas/Free-Video-Downloader.git" aria-label="GitHub">
                             <i class="fab fa-github"></i>
                         </a>
-                        <a href="https://www.youtube.com/@DirtyCode-42">
+                        <a href="https://www.youtube.com/@DirtyCode-42" aria-label="YouTube">
                             <i class="fab fa-youtube"></i>
                         </a>
-                        <a href="https://www.instagram.com/luizbacalhauau/">
+                        <a href="https://www.instagram.com/luizbacalhauau/" aria-label="Instagram">
                             <i class="fab fa-instagram"></i>
                         </a>
                     </div>
@@ -89,34 +105,122 @@
     <!-- SEÇÃO DE FUNCIONALIDADES -->
     <section id="features" class="features">
         <div class="container">
-            <h2 class="section-title">Por que usar o <span class="highlight">Get Media Free</span>?</h2>
+            <h2 class="section-title" data-i18n-html="features.title">Por que usar o <span class="highlight">Get Media Free</span>?</h2>
             <div class="features-grid">
                 <div class="feature-card">
                     <i class="fas fa-shield-alt"></i>
-                    <h3>Privacidade Total</h3>
-                    <p>Todo o processamento é feito localmente no seu computador.
-                        Nenhum dado é enviado para servidores.</p>
+                    <h3 data-i18n="features.privacy.title">Privacidade total</h3>
+                    <p data-i18n="features.privacy.text">Tudo é processado no seu computador. Nenhum dado é enviado para servidores e não existe telemetria.</p>
                 </div>
                 <div class="feature-card">
-                    <i class="fas fa-bolt"></i>
-                    <h3>Downloads Rápidos</h3>
-                    <p>Baixe múltiplos arquivos simultaneamente com alta velocidade e qualidade
-                        sem limitações.</p>
+                    <i class="fas fa-film"></i>
+                    <h3 data-i18n="features.h264.title">Pronto para edição</h3>
+                    <p data-i18n="features.h264.text">Todo vídeo sai em MP4 com H.264 + AAC, o formato aceito por Premiere, DaVinci Resolve, Vegas e CapCut. Quando o site não oferece H.264, o app converte mantendo a resolução.</p>
+                </div>
+                <div class="feature-card">
+                    <span class="feature-tag" data-i18n="features.new">Novo</span>
+                    <i class="fas fa-language"></i>
+                    <h3 data-i18n="features.audio.title">Idioma do áudio</h3>
+                    <p data-i18n="features.audio.text">Vídeos dublados do YouTube têm várias trilhas de áudio. O app pergunta qual idioma você quer baixar e já deixa a trilha original selecionada.</p>
+                </div>
+                <div class="feature-card">
+                    <i class="fas fa-list-ol"></i>
+                    <h3 data-i18n="features.playlists.title">Playlists e filas</h3>
+                    <p data-i18n="features.playlists.text">Cole o link de uma playlist ou fila do YouTube, escolha os vídeos e baixe todos de uma vez, na melhor qualidade até 1080p.</p>
+                </div>
+                <div class="feature-card">
+                    <i class="fas fa-hard-drive"></i>
+                    <h3 data-i18n="features.storage.title">Espaço estimado</h3>
+                    <p data-i18n="features.storage.text">Antes de baixar, veja quanto espaço cada qualidade vai ocupar no disco, já somando vídeo e áudio.</p>
+                </div>
+                <div class="feature-card">
+                    <i class="fas fa-layer-group"></i>
+                    <h3 data-i18n="features.queue.title">Fila de downloads</h3>
+                    <p data-i18n="features.queue.text">Adicione quantos links quiser: até 3 downloads rodam ao mesmo tempo e o restante espera na fila.</p>
                 </div>
                 <div class="feature-card">
                     <i class="fas fa-globe"></i>
-                    <h3>Suporte a Várias Redes</h3>
-                    <p>Compatível com YouTube, Instagram, Twitter, TikTok, Facebook e muito mais.</p>
+                    <h3 data-i18n="features.networks.title">Várias redes</h3>
+                    <p data-i18n="features.networks.text">Compatível com YouTube, Instagram, X (Twitter), TikTok, Facebook e muitos outros sites.</p>
                 </div>
                 <div class="feature-card">
-                    <i class="fas fa-lock"></i>
-                    <h3>100% Gratuito</h3>
-                    <p>Sem assinaturas, sem taxas escondidas. O projeto é open-source e mantido pela comunidade.</p>
+                    <i class="fas fa-code-branch"></i>
+                    <h3 data-i18n="features.free.title">Grátis e open-source</h3>
+                    <p data-i18n="features.free.text">Sem assinaturas e sem taxas escondidas. Todo o código está aberto no GitHub.</p>
                 </div>
-                <div class="feature-card">
-                    <i class="fas fa-wrench"></i>
-                    <h3>Ferramentas úteis</h3>
-                    <p>Oferece fila de Download. suporte a download de playlsits e uma ferramenta de corte do vídeo.</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- ============================================
+   SCREENSHOTS - CARROSSEL
+   ============================================ -->
+    <section id="screenshots" class="screenshots">
+        <div class="container">
+            <h2 class="section-title" data-i18n-html="screens.title">Veja o <span class="highlight">Get Media Free</span> em ação</h2>
+            <p class="screenshots-subtitle" data-i18n="screens.subtitle">
+                Algumas telas do aplicativo em uso
+            </p>
+
+            <div class="carousel-container">
+                <div class="carousel-track" id="carouselTrack">
+                    <!-- Slide 1 -->
+                    <div class="carousel-slide">
+                        <img src="assets/screenshots/screenshot1.png" alt="Janela de novo download" data-i18n-attr="alt:screens.download.alt" loading="lazy">
+                        <div class="slide-caption">
+                            <h4 data-i18n="screens.download.title">Novo download</h4>
+                            <p data-i18n="screens.download.text">Escolha formato, qualidade e veja o tamanho estimado</p>
+                        </div>
+                    </div>
+
+                    <!-- Slide 2 -->
+                    <div class="carousel-slide">
+                        <img src="assets/screenshots/screenshot2.png" alt="Diálogo de idioma do áudio" data-i18n-attr="alt:screens.audio.alt" loading="lazy">
+                        <div class="slide-caption">
+                            <h4 data-i18n="screens.audio.title">Idioma do áudio</h4>
+                            <p data-i18n="screens.audio.text">Escolha a trilha de vídeos dublados</p>
+                        </div>
+                    </div>
+
+                    <!-- Slide 3 -->
+                    <div class="carousel-slide">
+                        <img src="assets/screenshots/screenshot3.png" alt="Download de playlist" data-i18n-attr="alt:screens.playlists.alt" loading="lazy">
+                        <div class="slide-caption">
+                            <h4 data-i18n="screens.playlists.title">Playlists</h4>
+                            <p data-i18n="screens.playlists.text">Selecione e baixe playlists inteiras</p>
+                        </div>
+                    </div>
+
+                    <!-- Slide 4 -->
+                    <div class="carousel-slide">
+                        <img src="assets/screenshots/screenshot4.png" alt="Fila de downloads" data-i18n-attr="alt:screens.queue.alt" loading="lazy">
+                        <div class="slide-caption">
+                            <h4 data-i18n="screens.queue.title">Fila de downloads</h4>
+                            <p data-i18n="screens.queue.text">Acompanhe vários downloads ao mesmo tempo</p>
+                        </div>
+                    </div>
+
+                    <!-- Slide 5 -->
+                    <div class="carousel-slide">
+                        <img src="assets/screenshots/screenshot5.png" alt="Configurações do aplicativo" data-i18n-attr="alt:screens.settings.alt" loading="lazy">
+                        <div class="slide-caption">
+                            <h4 data-i18n="screens.settings.title">Configurações</h4>
+                            <p data-i18n="screens.settings.text">Idioma, cookies e limite do histórico</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Botões de Navegação -->
+                <button class="carousel-btn carousel-btn-prev" id="carouselPrev" aria-label="Imagem anterior" data-i18n-attr="aria-label:screens.prev">
+                    <i class="fas fa-chevron-left"></i>
+                </button>
+                <button class="carousel-btn carousel-btn-next" id="carouselNext" aria-label="Próxima imagem" data-i18n-attr="aria-label:screens.next">
+                    <i class="fas fa-chevron-right"></i>
+                </button>
+
+                <!-- Indicadores (dots) -->
+                <div class="carousel-indicators" id="carouselIndicators">
+                    <!-- Gerado via JavaScript -->
                 </div>
             </div>
         </div>
@@ -125,39 +229,39 @@
     <!-- SEÇÃO DE VÍDEOS (YOUTUBE) -->
     <section id="videos" class="videos">
         <div class="container">
-            <h2 class="section-title">Tutoriais em <span class="highlight">Vídeo</span></h2>
+            <h2 class="section-title" data-i18n-html="videos.title">Tutoriais em <span class="highlight">vídeo</span></h2>
             <div class="videos-grid">
                 <div class="video-card">
                     <div class="video-thumbnail">
                         <i class="fab fa-youtube"></i>
-                        <span>Assistir</span>
+                        <span data-i18n="videos.watch">Assistir</span>
                     </div>
-                    <h3>Como baixar vídeos do YouTube</h3>
-                    <p>Aprenda a usar o Get Media Free para baixar vídeos em 4k.</p>
+                    <h3 data-i18n="videos.v1.title">Como baixar vídeos do YouTube</h3>
+                    <p data-i18n="videos.v1.text">Aprenda a usar o Get Media Free para baixar vídeos em 4K.</p>
                     <button class="btn btn-video watch-btn" data-video-id="VIDEO_ID_1">
-                        <i class="fab fa-youtube"></i> Assistir no YouTube
+                        <i class="fab fa-youtube"></i> <span data-i18n="videos.watchYoutube">Assistir no YouTube</span>
                     </button>
                 </div>
                 <div class="video-card">
                     <div class="video-thumbnail">
                         <i class="fab fa-youtube"></i>
-                        <span>Assistir</span>
+                        <span data-i18n="videos.watch">Assistir</span>
                     </div>
-                    <h3>Baixando Reels e Tiktoks</h3>
-                    <p>Baixe vídeos verticais em alta qualidade em poucos passos.</p>
+                    <h3 data-i18n="videos.v2.title">Baixando Reels e TikToks</h3>
+                    <p data-i18n="videos.v2.text">Baixe vídeos verticais em alta qualidade em poucos passos.</p>
                     <button class="btn btn-video watch-btn" data-video-id="VIDEO_ID_2">
-                        <i class="fab fa-youtube"></i> Assistir no YouTube
+                        <i class="fab fa-youtube"></i> <span data-i18n="videos.watchYoutube">Assistir no YouTube</span>
                     </button>
                 </div>
                 <div class="video-card">
                     <div class="video-thumbnail">
                         <i class="fab fa-youtube"></i>
-                        <span>Assistir</span>
+                        <span data-i18n="videos.watch">Assistir</span>
                     </div>
-                    <h3>Reportando bugs e Erros</h3>
-                    <p>Meu aplicativo parou de funcionar, o que fazer? Siga o passo a passo.</p>
+                    <h3 data-i18n="videos.v3.title">Reportando bugs e erros</h3>
+                    <p data-i18n="videos.v3.text">O aplicativo parou de funcionar? Siga o passo a passo.</p>
                     <button class="btn btn-video watch-btn" data-video-id="VIDEO_ID_3">
-                        <i class="fab fa-youtube"></i> Assistir no YouTube
+                        <i class="fab fa-youtube"></i> <span data-i18n="videos.watchYoutube">Assistir no YouTube</span>
                     </button>
                 </div>
             </div>
@@ -167,7 +271,7 @@
     <!-- MODAL DO VÍDEO -->
     <div id="videoModal" class="video-modal">
         <div class="modal-content">
-            <span class="modal-close">&times;</span>
+            <button type="button" class="modal-close" aria-label="Fechar vídeo" data-i18n-attr="aria-label:videos.close">&times;</button>
             <div class="modal-body">
                 <div id="videoPlayerContainer" class="video-player-container">
                 </div>
@@ -180,51 +284,44 @@
     <section id="about" class="about">
         <div class="container">
             <div class="about-content">
-                <h2 class="section-title">Sobre o <span class="highlight">Desenvolvimento</span></h2>
+                <h2 class="section-title" data-i18n-html="about.title">Sobre o <span class="highlight">desenvolvimento</span></h2>
                 <div class="about-grid">
                     <div class="about-text">
                         <p>
                             <i class="fas fa-code"></i>
-                            <strong>Get Media Free</strong> é um projeto open-source desenvolvido com
-                            <strong>Python</strong> e muitas ferramentas da comunidade, como o motor
-                            de download <strong>yt-dlp<strong>.
-                                    Todo o código desenvolvido está disponível no GitHub para contribuições
-                                    e estudo de outros desenvolvedores.
+                            <span data-i18n-html="about.p1"><strong>Get Media Free</strong> é um projeto open-source desenvolvido em <strong>Python</strong> com ferramentas da comunidade, como o motor de download <strong>yt-dlp</strong> e o <strong>FFmpeg</strong>. Todo o código está no GitHub para contribuições e estudo.</span>
                         </p>
                         <p>
                             <i class="fas fa-users"></i>
-                            Desenvolvido por um estudante de Análise e Desenvolvimento de Sistema como
-                            material de estudo.
-                            Pensado para oferecer uma ferramenta estável, confiável e gratúita a
-                            profissionais da edição de vídeo.
+                            <span data-i18n-html="about.p2">Desenvolvido por um estudante de Análise e Desenvolvimento de Sistemas como material de estudo, pensado para oferecer uma ferramenta estável, confiável e gratuita para profissionais de edição de vídeo.</span>
                         </p>
                         <div class="tech-stack">
                             <span class="tech-badge">Python</span>
                             <span class="tech-badge">yt-dlp</span>
-                            <span class="tech-badge">Node.js</span>
                             <span class="tech-badge">FFmpeg</span>
-                            <span class="tech-badge">Pyside6</span>
+                            <span class="tech-badge">Node.js</span>
+                            <span class="tech-badge">PySide6</span>
                         </div>
                         <a href="https://github.com/LuizHenriqueFreitas/Free-Video-Downloader.git"
                             class="btn btn-github">
-                            <i class="fab fa-github"></i> Ver no GitHub
+                            <i class="fab fa-github"></i> <span data-i18n="about.github">Ver no GitHub</span>
                         </a>
                     </div>
                     <div class="about-stats">
                         <div class="stat-item">
                             <i class="fas fa-star"></i>
                             <span>1</span>
-                            <p>Estrelas no GitHub</p>
+                            <p data-i18n="about.stars">Estrelas no GitHub</p>
                         </div>
                         <div class="stat-item">
                             <i class="fas fa-code-branch"></i>
                             <span>1</span>
-                            <p>Contribuidores</p>
+                            <p data-i18n="about.contributors">Contribuidores</p>
                         </div>
                         <div class="stat-item">
                             <i class="fas fa-clock"></i>
                             <span>...</span>
-                            <p>Última atualização</p>
+                            <p data-i18n="about.updated">Última atualização</p>
                         </div>
                     </div>
                 </div>
@@ -237,25 +334,22 @@
         <div class="container">
             <div class="footer-content">
                 <div class="footer-logo">
-                    <i class="fas fa-download"></i>
+                    <img src="assets/app-icon.png" alt="" class="logo-icon" />
                     <span>Get Media Free</span>
                 </div>
-                <p class="footer-text">
-                    &copy; 2026 Get Media Free - Feito para ser prático e grátis.
-                    <br />
-                    Este projeto é open-source e não tem afiliação com as plataformas
-                    mencionadas.
-                    <br />
-                    email para contato: luiz.h.o.freitas@gmail.com
+                <p class="footer-text" data-i18n-html="footer.text">
+                    &copy; 2026 Get Media Free - Feito para ser prático e grátis.<br />
+                    Projeto open-source, sem afiliação com as plataformas mencionadas.<br />
+                    Contato: luiz.h.o.freitas@gmail.com
                 </p>
                 <div class="footer-links">
-                    <a href="https://github.com/LuizHenriqueFreitas/Free-Video-Downloader.git">
+                    <a href="https://github.com/LuizHenriqueFreitas/Free-Video-Downloader.git" aria-label="GitHub">
                         <i class="fab fa-github"></i>
                     </a>
-                    <a href="https://www.youtube.com/@DirtyCode-42">
+                    <a href="https://www.youtube.com/@DirtyCode-42" aria-label="YouTube">
                         <i class="fab fa-youtube"></i>
                     </a>
-                    <a href="https://www.instagram.com/luizbacalhauau/">
+                    <a href="https://www.instagram.com/luizbacalhauau/" aria-label="Instagram">
                         <i class="fab fa-instagram"></i>
                     </a>
                 </div>
@@ -263,6 +357,7 @@
         </div>
     </footer>
 
+    <script src="i18n.js"></script>
     <script src="script.js"></script>
 </body>
 

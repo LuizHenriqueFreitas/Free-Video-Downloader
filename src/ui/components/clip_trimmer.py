@@ -3,7 +3,8 @@
 """ Here you will find:
     - Trimmer tool component settings;
     - UI implementation;
-    - real time media player logic + thumbnail fallback;
+    - media player logic (local preview file) + thumbnail fallback;
+    - "loading" state while the preview is downloaded;
     - player buttons logic (play, pause, etc);
     - markers and timelines logic and UI implementation;
 """
@@ -13,12 +14,13 @@ import os
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSlider
 )
-from PySide6.QtCore import Qt, QUrl
+from PySide6.QtCore import Qt, QUrl, QTimer, QObject
 from PySide6.QtGui import QPixmap
 from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PySide6.QtMultimediaWidgets import QVideoWidget
 
-from src.ui.components.range_slider import RangeSlider
+from core.i18n import tr
+from ui.components.range_slider import RangeSlider
 
 # numerical time operations to friendly visual feedback
 def format_time(seconds):
@@ -33,7 +35,9 @@ def format_time(seconds):
     return f"{m:02d}:{s:02d}"
 
 """ Clip select (start/end), with video preview.
-    Try to use real player (QMediaPlayer), if ocurred an error
+    Starts on "loading" state (thumbnail + cut bar already working) while the
+    preview file is downloaded (see PreviewDownloader at core/video_info.py).
+    Then try to use real player (QMediaPlayer), if ocurred an error
     automaticaly change just to thumbnail + timebar and selectors.
 """
 # main class from this file
@@ -51,9 +55,10 @@ class ClipTrimmer(QWidget):
 
         # check if the clip start is earlier than end 
         if self._duration <= 0:
-            # that will need to be translated on location update
-            self._enter_fallback("Duração desconhecida — corte indisponível.")
+            self._enter_fallback(tr("trimmer.unknown_duration"))
             self.slider.setEnabled(False)
+        else:
+            self._show_loading()
 
 
     """ ====================
@@ -80,8 +85,7 @@ class ClipTrimmer(QWidget):
 
         # ===== Player Controlls ======
         controls = QHBoxLayout()
-        # that will need to be translated on location update
-        self.play_btn = QPushButton("▶ Reproduzir")
+        self.play_btn = QPushButton(tr("trimmer.play"))
         self.play_btn.clicked.connect(self._toggle_play)
         controls.addWidget(self.play_btn)
 
@@ -90,8 +94,7 @@ class ClipTrimmer(QWidget):
         controls.addWidget(self.current_label)
         controls.addStretch()
 
-        # that will need to be translated on location update
-        self.preview_clip_btn = QPushButton("Pré-visualizar trecho")
+        self.preview_clip_btn = QPushButton(tr("trimmer.preview_clip"))
         self.preview_clip_btn.clicked.connect(self._preview_clip)
         controls.addWidget(self.preview_clip_btn)
         layout.addLayout(controls)
@@ -118,8 +121,7 @@ class ClipTrimmer(QWidget):
         layout.addWidget(self.seek_slider)
 
         # ===== Clip Selection Bar - marks clip start and end =====
-        # that will need to be translated on location update
-        trim_caption = QLabel("Trecho a baixar (arraste os marcadores):")
+        trim_caption = QLabel(tr("trimmer.caption"))
         trim_caption.setStyleSheet("color: #4CAF50; font-size: 11px;")
         layout.addWidget(trim_caption)
 
@@ -131,16 +133,13 @@ class ClipTrimmer(QWidget):
 
         # ===== Markers =======
         marks = QHBoxLayout()
-        # that will need to be translated on location update
-        self.mark_start_btn = QPushButton("Início = agora")
+        self.mark_start_btn = QPushButton(tr("trimmer.mark_start"))
         self.mark_start_btn.clicked.connect(self._mark_start)
-        # that will need to be translated on location update
-        self.mark_end_btn = QPushButton("Fim = agora")
+        self.mark_end_btn = QPushButton(tr("trimmer.mark_end"))
         self.mark_end_btn.clicked.connect(self._mark_end)
 
-        # that will need to be translated on location update
-        self.start_label = QLabel("Início: 00:00")
-        self.end_label = QLabel(f"Fim: {format_time(self._duration)}")
+        self.start_label = QLabel(tr("trimmer.start", time=format_time(0)))
+        self.end_label = QLabel(tr("trimmer.end", time=format_time(self._duration)))
         self.start_label.setStyleSheet("color: #4CAF50;")
         self.end_label.setStyleSheet("color: #4CAF50;")
 
@@ -151,22 +150,27 @@ class ClipTrimmer(QWidget):
         marks.addWidget(self.mark_end_btn)
         layout.addLayout(marks)
 
-        # that will need to be translated on location update
-        self.hint_label = QLabel("Arraste os marcadores ou use os botões para definir o trecho.")
+        self.hint_label = QLabel(tr("trimmer.hint"))
         self.hint_label.setStyleSheet("color: #888; font-size: 11px;")
         layout.addWidget(self.hint_label)
 
 
     """ ========================
-          LOAD PREVIEW URL
+          LOAD PREVIEW FILE
       ======================== """
-    # load real time media player
-    def load_preview(self, url):
+    # "loading" state: thumbnail + message, cut bar works, player controls wait
+    def _show_loading(self):
+        self.video_widget.hide()
+        self._set_player_controls_enabled(False)
+        self._show_thumbnail(tr("trimmer.loading_preview"))
+        self.hint_label.setText(tr("trimmer.loading_preview_hint"))
+
+    # load the local preview file (None = preview download failed)
+    def load_preview(self, path):
         if self._fallback:
             return
-        if not url:
-            # that will need to be translated on location update
-            self._enter_fallback("Preview indisponível — use a barra de tempo.")
+        if not path or not os.path.exists(path):
+            self._enter_fallback(tr("trimmer.preview_unavailable_link"))
             return
 
         try:
@@ -180,10 +184,38 @@ class ClipTrimmer(QWidget):
             self._player.durationChanged.connect(self._on_duration_changed)
             self._player.mediaStatusChanged.connect(self._on_media_status)
 
-            self._player.setSource(QUrl(url))
+            # leave "loading" state
+            self.fallback_label.hide()
+            self.video_widget.show()
+            self._set_player_controls_enabled(True)
+            self.hint_label.setText(tr("trimmer.hint"))
+
+            # local file: fromLocalFile() is needed (Windows paths like C:\...)
+            self._player.setSource(QUrl.fromLocalFile(path))
         except Exception as e:
-            # that will need to be translated on location update
-            self._enter_fallback(f"Preview indisponível ({e}).")
+            self._enter_fallback(tr("trimmer.preview_unavailable_error", error=e))
+
+    # enable/disable everything that depends on the player
+    def _set_player_controls_enabled(self, enabled):
+        self.play_btn.setEnabled(enabled)
+        self.preview_clip_btn.setEnabled(enabled)
+        self.mark_start_btn.setEnabled(enabled)
+        self.mark_end_btn.setEnabled(enabled)
+        self.seek_slider.setEnabled(enabled)
+
+    # show media thumbnail as visual reference (or the message if there's none)
+    def _show_thumbnail(self, message):
+        self.fallback_label.clear()
+        if self._thumbnail_path and os.path.exists(self._thumbnail_path):
+            pix = QPixmap(self._thumbnail_path)
+            if not pix.isNull():
+                self.fallback_label.setPixmap(
+                    pix.scaled(self.fallback_label.width() or 390, self.fallback_label.height(),
+                               Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                )
+        if not self.fallback_label.pixmap() or self.fallback_label.pixmap().isNull():
+            self.fallback_label.setText(message or tr("trimmer.preview_unavailable"))
+        self.fallback_label.show()
 
 
     """ ====================
@@ -198,40 +230,23 @@ class ClipTrimmer(QWidget):
             except Exception:
                 pass
         self.video_widget.hide()
-        self.play_btn.setEnabled(False)
-        self.preview_clip_btn.setEnabled(False)
-        self.mark_start_btn.setEnabled(False)
-        self.mark_end_btn.setEnabled(False)
-        self.seek_slider.setEnabled(False)
+        self._set_player_controls_enabled(False)
 
         # show media thumbnail as visual reference
-        if self._thumbnail_path and os.path.exists(self._thumbnail_path):
-            pix = QPixmap(self._thumbnail_path)
-            if not pix.isNull():
-                self.fallback_label.setPixmap(
-                    pix.scaled(self.fallback_label.size(),
-                               Qt.KeepAspectRatio, Qt.SmoothTransformation)
-                )
-        if not self.fallback_label.pixmap() or self.fallback_label.pixmap().isNull():
-            # that will need to be translated on location update
-            self.fallback_label.setText(message or "Preview indisponível")
-        self.fallback_label.show()
+        self._show_thumbnail(message)
 
         if message:
-            # that will need to be translated on location update
-            self.hint_label.setText(message + " A seleção do trecho continua funcionando.")
+            self.hint_label.setText(tr("trimmer.fallback_hint", message=message))
 
     # player generic error alert
     def _on_player_error(self, error, error_string=""):
         if error != QMediaPlayer.NoError:
-            # that will need to be translated on location update
-            self._enter_fallback("Não foi possível reproduzir o vídeo aqui.")
+            self._enter_fallback(tr("trimmer.cant_play"))
 
     # media preview error alert
     def _on_media_status(self, status):
         if status == QMediaPlayer.InvalidMedia:
-            # that will need to be translated on location update
-            self._enter_fallback("Formato de stream não suportado para preview.")
+            self._enter_fallback(tr("trimmer.unsupported_stream"))
 
 
     """ ===================
@@ -245,8 +260,7 @@ class ClipTrimmer(QWidget):
             self.slider.setEnabled(True)
             self.slider.setMaximum(max(1, self._duration))
             self.seek_slider.setRange(0, max(1, self._duration))
-            # that will need to be translated on location update
-            self.end_label.setText(f"Fim: {format_time(self._duration)}")
+            self.end_label.setText(tr("trimmer.end", time=format_time(self._duration)))
 
     # run when markers position changes
     def _on_position_changed(self, pos_ms):
@@ -292,19 +306,16 @@ class ClipTrimmer(QWidget):
             return
         if self._player.playbackState() == QMediaPlayer.PlayingState:
             self._player.pause()
-            # that will need to be translated on location update
-            self.play_btn.setText("▶ Reproduzir")
+            self.play_btn.setText(tr("trimmer.play"))
         else:
             self._player.play()
-            # that will need to be translated on location update
-            self.play_btn.setText("⏸ Pausar")
+            self.play_btn.setText(tr("trimmer.pause"))
 
     # pause button logic
     def _pause(self):
         if self._player and self._player.playbackState() == QMediaPlayer.PlayingState:
             self._player.pause()
-            # that will need to be translated on location update
-            self.play_btn.setText("▶ Reproduzir")
+            self.play_btn.setText(tr("trimmer.play"))
 
     # preview clip UI information logic
     def _preview_clip(self):
@@ -313,8 +324,7 @@ class ClipTrimmer(QWidget):
         self._player.setPosition(self.slider.start() * 1000)
         self._preview_stop_at = self.slider.end()
         self._player.play()
-        # that will need to be translated on location update
-        self.play_btn.setText("⏸ Pausar")
+        self.play_btn.setText(tr("trimmer.pause"))
 
     # timeline counter logic - used by markers to correct visual position on screen
     def _current_seconds(self):
@@ -332,9 +342,8 @@ class ClipTrimmer(QWidget):
 
     # update start/end text feedback when clip range changes
     def _on_range_changed(self, start, end):
-        # that will need to be translated on location update
-        self.start_label.setText(f"Início: {format_time(start)}")
-        self.end_label.setText(f"Fim: {format_time(end)}")
+        self.start_label.setText(tr("trimmer.start", time=format_time(start)))
+        self.end_label.setText(tr("trimmer.end", time=format_time(end)))
 
 
     """ ===============
@@ -352,23 +361,54 @@ class ClipTrimmer(QWidget):
 
     def stop(self):
         """ Clean player ending. Is necessary release media with seSource(QUrl())
-            to the FFmpeg stop the network and decodification threads. 
+            to the FFmpeg stop the network and decodification threads.
             Or "Qthread: Destroyed while thread is still runnig" and probably
-            "Failed to send close message" errors will happend when destroy 
+            "Failed to send close message" errors will happend when destroy
             the player with a streaming connection open yet
+
+            player.stop()/setSource(QUrl()) can block for a few seconds on an
+            active network stream (Qt Multimedia FFmpeg backend on Linux), which
+            would freeze the whole dialog since this runs on the GUI thread when
+            the dialog is being closed. So the actual teardown is deferred to the
+            next event loop iteration, and the player/audio are detached from
+            this widget's parenting first so they survive this widget's deleteLater().
+
+            disconnect() is deferred too, and runs only after stop(): calling it
+            synchronously while media is actively playing can make the GUI thread
+            block/deadlock contending with the FFmpeg backend's decoder thread for
+            the signal-connection lock. Once stop() has halted playback there is
+            no more contention, so disconnect() becomes cheap and safe there.
+            Any signal that fires in the meantime is harmless: self._player is
+            already None below, and every slot guards on it before touching the
+            player.
         """
         p = self._player
         a = self._audio
         self._player = None
         self._audio = None
-        if p is not None:
+        if p is None:
+            return
+
+        try:
+            p.setParent(None)
+        except Exception:
+            pass
+        if a is not None:
             try:
-                # avoid callback while teardown runnig
-                p.disconnect()
+                a.setParent(None)
+            except Exception:
+                pass
+
+        def _teardown():
+            try:
+                p.stop()
             except Exception:
                 pass
             try:
-                p.stop()
+                # avoid callback while the rest of teardown runs.
+                # bare p.disconnect() raises TypeError on this PySide6 binding
+                # ("not enough arguments") - has to be called as QObject.disconnect(p)
+                QObject.disconnect(p)
             except Exception:
                 pass
             try:
@@ -380,9 +420,17 @@ class ClipTrimmer(QWidget):
                 p.setSource(QUrl())
             except Exception:
                 pass
-            p.deleteLater()
-        if a is not None:
-            a.deleteLater()
+            try:
+                p.deleteLater()
+            except Exception:
+                pass
+            if a is not None:
+                try:
+                    a.deleteLater()
+                except Exception:
+                    pass
+
+        QTimer.singleShot(0, _teardown)
 
     def closeEvent(self, event):
         self.stop()

@@ -13,6 +13,7 @@
 from collections import deque
 from threading import RLock
 from PySide6.QtCore import QThread
+from services.thread_keeper import keep_thread
 from ui.workers.download_worker import DownloadWorker
 
 """ About Logic implemented:
@@ -56,7 +57,9 @@ class DownloadService:
        ======================= """
 
     # called to start a new download
-    def start_download(self, item, on_progress, on_finished, on_error, on_cancel):
+    # on_conversion (optional): receives (kind, percent, seconds_left) while
+    # ffmpeg converts/cuts the file after the download (see DownloadWorker)
+    def start_download(self, item, on_progress, on_finished, on_error, on_cancel, on_conversion=None):
         with self._lock:
             # add new item to download queue
             self.queue.append({
@@ -65,6 +68,7 @@ class DownloadService:
                 "on_finished": on_finished,
                 "on_error": on_error,
                 "on_cancel": on_cancel,
+                "on_conversion": on_conversion,
             })
             self._process_queue()
 
@@ -88,6 +92,7 @@ class DownloadService:
                     data["on_finished"],
                     data["on_error"],
                     data["on_cancel"],
+                    data.get("on_conversion"),
                 )
 
 
@@ -96,7 +101,7 @@ class DownloadService:
       ======================== """
 
     # start a thread to manage the download
-    def _start_thread(self, item, on_progress, on_finished, on_error, on_cancel):
+    def _start_thread(self, item, on_progress, on_finished, on_error, on_cancel, on_conversion=None):
 
         # instanciate a QtCore thread
         thread = QThread()
@@ -115,6 +120,9 @@ class DownloadService:
 
         # conncet worker progress signal to on_progress local var
         worker.progress.connect(on_progress)
+        # conversion/cut progress after the download (optional callback)
+        if on_conversion:
+            worker.conversion_progress.connect(on_conversion)
 
         # connect worker finish signal with finish handler
         worker.finished.connect(
@@ -136,8 +144,8 @@ class DownloadService:
 
         # final cleanup of references when the thread actually terminates.
         thread.finished.connect(lambda: self._on_thread_finished(item.id))
-        thread.finished.connect(worker.deleteLater)
-        thread.finished.connect(thread.deleteLater)
+        # thread + worker kept alive until the thread really ends (see thread_keeper.py)
+        keep_thread(thread, worker)
 
         # thread start function
         thread.start()

@@ -1,7 +1,7 @@
 This file, Roadmap, is the plans to next versions of this application.
 
 
-See, the x.x.x already has what is write above implemented, 
+See, the x.x.x already has what is write above implemented,
 this things are what the version need to have to be released.
 
 >PS: this was created after v2.0.0 release.
@@ -36,32 +36,55 @@ auto-upadete of yt-dlp, not the full applicatino.
 
 
 ### v2.0.0
-The biggest update until now. 
-Rebuild all the software with new screens, new UI and more user resources.
-About development, that version implements a installer, embbed nodejs runtime,
-yt-dlp and ffmpeg, also historic of donwloads was system implemented,
-download queue and visual feedbacks to user.
+The biggest update until now.   
+
+Rebuild all the software with new screens, new UI and more user resources.   
+
+About development, that version implements a installer, embbed nodejs runtime, yt-dlp and ffmpeg, also historic of donwloads was system implemented,download queue and visual feedbacks to user.      
 
 
 ---
 
 
-### v2.5.0
+### v2.5.0 - there's no released version
 Allows donwloads from instagram, X, Tiktok in addition to youtube.
+
 Allows downloads of youtube playlists or queues.
-Provides a trimmer tool for just youtube videos, you can cut a clip and get
-only this.
+
+Idealize a trimmer tool for any site yt-dlp can download (preview with sound and time-bar), you can cut a clip and get only this.
+
 Code review and documentation for new versions and more reability of the app.
 
+---
+
+
+### v2.6.0 - there's no released version
+Localization: the whole interface is available in Portuguese (Brazil) and English.
+
+The installer asks the language and the app starts in it; it can also be changed later on the app ("Idioma" / "Language" selector, applied after a restart).
+
 
 ---
 
+
+### v2.6.5
+Add youtube audio track selector for translated vídeos
+
+
+---
+
+### v2.8.0
+Check and implemente the trimmer tool for any social media content
+
+
+---
 
 ### v3.0.0
 Full auto-update and more durability enhancement implementation.
+
 All code translated to english.
-Add to installer a language selector, english or portuguese.
-Add to projetc a landinpage and github page to new people find the software.
+
+Add to projetc a landingpage and github page to new people find the software.
 
 
 ---

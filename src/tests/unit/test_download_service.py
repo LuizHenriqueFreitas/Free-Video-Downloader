@@ -77,6 +77,7 @@ class FakeWorker:
         self.finished = FakeSignal()
         self.error = FakeSignal()
         self.cancelled = FakeSignal()
+        self.conversion_progress = FakeSignal()
         self.run_called = False
         self.cancel_called = False
         self.cancel_raises = None
@@ -107,6 +108,8 @@ class FakeWorkerFactory:
     def __init__(self):
         self.created = {}
         self.behaviors = {}
+        # (thread, objects) registered on services.thread_keeper.keep_thread
+        self.kept = []
 
     def register_behavior(self, item_id, behavior):
         self.behaviors[item_id] = behavior
@@ -133,6 +136,7 @@ def worker_factory(monkeypatch):
     factory = FakeWorkerFactory()
     monkeypatch.setattr(ds, "QThread", FakeThread)
     monkeypatch.setattr(ds, "DownloadWorker", factory)
+    monkeypatch.setattr(ds, "keep_thread", lambda thread, *objs: factory.kept.append((thread, objs)))
     return factory
 
 
@@ -211,6 +215,32 @@ class TestStartDownload:
         worker.progress.emit(42)
         assert calls["progress"] == [42]
 
+    def test_conversion_progress_forwarded_when_callback_given(self, service, worker_factory):
+        item = FakeItem(1)
+        _, *cbs = make_callbacks()
+        received = []
+        service.start_download(item, *cbs, on_conversion=lambda *a: received.append(a))
+
+        worker_factory.created[1].conversion_progress.emit("convert", 42, 120)
+        assert received == [("convert", 42, 120)]
+
+    def test_conversion_callback_is_optional(self, service, worker_factory):
+        # old calls (without on_conversion) keep working
+        item = FakeItem(1)
+        _, *cbs = make_callbacks()
+        service.start_download(item, *cbs)
+        worker_factory.created[1].conversion_progress.emit("convert", 10, -1)
+
+    def test_queued_item_keeps_conversion_callback(self, service, worker_factory):
+        received = []
+        for i in range(1, 5):
+            _, *cbs = make_callbacks()
+            service.start_download(FakeItem(i), *cbs, on_conversion=lambda *a: received.append(a))
+        # frees a slot: item 4 leaves the queue and starts
+        worker_factory.created[1].finished.emit(FakeItem(1))
+        worker_factory.created[4].conversion_progress.emit("cut", 5, -1)
+        assert received == [("cut", 5, -1)]
+
 
 # ---------------------------------------------------------------------------
 # Conclusão de download (finished) e avanço da fila
@@ -241,8 +271,11 @@ class TestFinishedFlow:
         worker.finished.emit(item)
 
         assert thread.quit_called is True
-        assert thread.delete_later_called is True
-        assert worker.delete_later_called is True
+        # thread + worker are released by thread_keeper after the thread really
+        # ends - deleteLater() on them races with Python and aborts Qt
+        assert (thread, (worker,)) in worker_factory.kept
+        assert thread.delete_later_called is False
+        assert worker.delete_later_called is False
 
     def test_finished_processes_next_queued_item(self, service, worker_factory):
         items = [FakeItem(i) for i in range(1, 5)]

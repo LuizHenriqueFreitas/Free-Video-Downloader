@@ -17,6 +17,32 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import QPixmap
 from PySide6.QtCore import Qt
 
+from core.i18n import tr, audio_language_name, SUPPORTED_LANGUAGES
+
+# progress bar colors: download (green) and conversion/cut after download (blue)
+DOWNLOAD_BAR_STYLE = "QProgressBar::chunk { background-color: #4CAF50; }"
+CONVERSION_BAR_STYLE = "QProgressBar::chunk { background-color: #2196F3; }"
+
+# estimated time left to friendly text (None or negative = still calculating)
+def format_remaining(seconds):
+    if seconds is None or seconds < 0:
+        return tr("card.calculating_time")
+    seconds = int(seconds)
+    if seconds < 60:
+        return tr("card.seconds_left", seconds=seconds)
+    if seconds < 3600:
+        return tr("card.minutes_left", minutes=round(seconds / 60))
+    h, rest = divmod(seconds, 3600)
+    return tr("card.hours_left", hours=h, minutes=f"{rest // 60:02d}")
+
+""" The quality label is saved on history.json in the language the app had
+    when the download was made. Playlist items save a text label, so it's
+    shown again in the current language, whatever language saved it.
+"""
+_BEST_QUALITY_LABELS = {"best"} | {
+    tr("playlist.best_quality_label", lang=code) for code in SUPPORTED_LANGUAGES
+}
+
 # Download Card component class
 class DownloadCard(QWidget):
     def __init__(self, item):
@@ -27,6 +53,8 @@ class DownloadCard(QWidget):
         self.on_retry = None
         self.on_copy = None
         self.on_remove = None
+        # None while downloading, "convert"/"cut" while ffmpeg processes the file
+        self._phase = None
 
         # status visual feedback is disconect to real status to doesn't make wrogn changes
         self._terminal_view = item.status in ("completed", "error", "cancelled")
@@ -71,7 +99,7 @@ class DownloadCard(QWidget):
         center_layout.addWidget(self.title_label)
 
         # original video name - secundary info
-        orig_text = f"Original: {self.item.original_title}"
+        orig_text = tr("card.original", title=self.item.original_title)
         self.custom_name_label = QLabel(orig_text)
         self.custom_name_label.setStyleSheet("color: #aaa; font-size: 11px;")
         self.custom_name_label.setWordWrap(True)
@@ -90,7 +118,7 @@ class DownloadCard(QWidget):
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
         self.progress_bar.setFormat("%p%")
-        self.progress_bar.setStyleSheet("QProgressBar::chunk { background-color: #4CAF50; }")
+        self.progress_bar.setStyleSheet(DOWNLOAD_BAR_STYLE)
         progress_layout.addWidget(self.progress_bar)
         self.progress_container.hide()
         center_layout.addWidget(self.progress_container)
@@ -120,8 +148,7 @@ class DownloadCard(QWidget):
         download_btns_layout = QVBoxLayout(self.download_buttons)
         download_btns_layout.setContentsMargins(0, 0, 0, 0)
         download_btns_layout.setSpacing(4)
-        # that will need to be translated at location update
-        self.cancel_btn = QPushButton("Cancelar")
+        self.cancel_btn = QPushButton(tr("common.cancel"))
         self.cancel_btn.clicked.connect(self._cancel_download)
         download_btns_layout.addWidget(self.cancel_btn)
         self.download_buttons.hide()
@@ -132,11 +159,9 @@ class DownloadCard(QWidget):
         action_btns_layout = QVBoxLayout(self.action_buttons)
         action_btns_layout.setContentsMargins(0, 0, 0, 0)
         action_btns_layout.setSpacing(4)
-        # that will need to be translated at location update
-        self.open_file_btn = QPushButton("Abrir arquivo")
+        self.open_file_btn = QPushButton(tr("card.open_file"))
         self.open_file_btn.clicked.connect(self._open_file)
-        # that will need to be translated at location update
-        self.open_folder_btn = QPushButton("Abrir pasta")
+        self.open_folder_btn = QPushButton(tr("card.open_folder"))
         self.open_folder_btn.clicked.connect(self._open_folder)
         action_btns_layout.addWidget(self.open_file_btn)
         action_btns_layout.addWidget(self.open_folder_btn)
@@ -144,8 +169,7 @@ class DownloadCard(QWidget):
         right_layout.addWidget(self.action_buttons)
 
         # "try again" button - when fail or canceled
-        # that will need to be translated at location update
-        self.retry_btn = QPushButton("Tentar novamente")
+        self.retry_btn = QPushButton(tr("card.retry"))
         self.retry_btn.clicked.connect(self._retry_download)
         self.retry_btn.hide()
         right_layout.addWidget(self.retry_btn)
@@ -156,12 +180,10 @@ class DownloadCard(QWidget):
         secondary_row = QHBoxLayout()
         secondary_row.setContentsMargins(0, 0, 0, 0)
         secondary_row.setSpacing(4)
-        # that will need to be translated at location update
-        self.copy_link_btn = QPushButton("Copiar link")
+        self.copy_link_btn = QPushButton(tr("card.copy_link"))
         self.copy_link_btn.setObjectName("secondaryBtn")
         self.copy_link_btn.clicked.connect(self._copy_link)
-        # that will need to be translated at location update
-        self.remove_btn = QPushButton("Remover")
+        self.remove_btn = QPushButton(tr("card.remove"))
         self.remove_btn.setObjectName("removeBtn")
         self.remove_btn.clicked.connect(self._remove_card)
         secondary_row.addWidget(self.copy_link_btn)
@@ -240,9 +262,8 @@ class DownloadCard(QWidget):
     def _update_meta_info(self):
         # quality info
         quality_text = getattr(self.item, 'quality', 'Auto')
-        if quality_text == 'best':
-            # that will need to be translated at location update
-            quality_text = 'Melhor qualidade'
+        if quality_text in _BEST_QUALITY_LABELS:
+            quality_text = tr("playlist.best_quality_label")
         format_type = getattr(self.item, 'format_type', 'MP4')
 
         # file size info
@@ -262,8 +283,12 @@ class DownloadCard(QWidget):
             else:
                 size_text = f" • {size_mb:.1f} MB"
 
+        # audio language chosen on the audio language dialog (dubbed videos)
+        language = getattr(self.item, "audio_language", None)
+        language_text = f" • {audio_language_name(language)}" if language else ""
+
         # set info into UI 
-        self.meta_label.setText(f"{format_type} • {quality_text}{size_text}")
+        self.meta_label.setText(f"{format_type} • {quality_text}{language_text}{size_text}")
 
 
     """ ==========================
@@ -275,13 +300,18 @@ class DownloadCard(QWidget):
 
         # status dictionary 
         status_map = {
-            "queued":      ("#607D8B", "Na fila..."),
-            "downloading": ("#FFC107", "Baixando..."),
-            "completed":   ("#4CAF50", "Concluído"),
-            "error":       ("#F44336", "Falha no download"),
-            "cancelled":   ("#9E9E9E", "Cancelado")
+            "queued":      ("#607D8B", tr("card.status_queued")),
+            "downloading": ("#FFC107", tr("card.status_downloading")),
+            "completed":   ("#4CAF50", tr("card.status_completed")),
+            "error":       ("#F44336", tr("card.status_error")),
+            "cancelled":   ("#9E9E9E", tr("card.status_cancelled"))
         }
         color, text = status_map.get(status, ("#9E9E9E", status))
+
+        # any status change leaves the conversion mode (a retry starts green again)
+        if self._phase is not None:
+            self._phase = None
+            self.progress_bar.setStyleSheet(DOWNLOAD_BAR_STYLE)
         self.status_dot.setStyleSheet(f"background-color: {color}; border-radius: 6px;")
         self.status_label.setText(text)
 
@@ -330,17 +360,41 @@ class DownloadCard(QWidget):
       ===================== """
     # progress bar updater
     def update_progress(self, value):
+        # the conversion/cut has its own progress (see update_conversion)
+        if self._phase is not None:
+            return
         value = max(0, min(100, value))
-        # review the clip progress bar logic to emproviment this
-        if self._is_clip() and value >= 99:
+        if self.progress_bar.maximum() == 0:
             self.progress_bar.setRange(0, 100)
-            # that will need to be translated at location update
-            self.progress_bar.setFormat("Cortando trecho...")
-        else:
-            if self.progress_bar.maximum() == 0:
-                self.progress_bar.setRange(0, 100)
-            self.progress_bar.setValue(value)
-            self.progress_bar.setFormat(f"{value}%")
+        self.progress_bar.setValue(value)
+        self.progress_bar.setFormat(f"{value}%")
+
+    """ Conversion / cut progress, after the download finishes.
+        Uses the same progress bar (same place, same card size), blue colored.
+        percent -1 = unknown duration (busy bar), seconds_left -1 = calculating.
+    """
+    def update_conversion(self, kind, percent, seconds_left):
+        # first call: enter conversion mode
+        if self._phase != kind:
+            self._phase = kind
+            self.progress_bar.setStyleSheet(CONVERSION_BAR_STYLE)
+
+        action = tr("card.cutting") if kind == "cut" else tr("card.converting")
+
+        if percent < 0:
+            # unknown duration: "busy" animation, no percent and no time
+            self.progress_bar.setRange(0, 0)
+            self.progress_bar.setFormat(action)
+            return
+
+        percent = max(0, min(100, percent))
+        if self.progress_bar.maximum() == 0:
+            self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(percent)
+        # "%" is special on QProgressBar format (%p, %v), "%%" is a literal "%"
+        self.progress_bar.setFormat(
+            f"{action} {percent}%% • {format_remaining(seconds_left)}"
+        )
 
     # card updade estatus
     def update_status(self, status):
@@ -356,11 +410,6 @@ class DownloadCard(QWidget):
             self.item.status = "downloading"
             self._apply_status()
 
-    # check if is a clip download
-    def _is_clip(self):
-            return (getattr(self.item, "clip_start", None) is not None
-                    or getattr(self.item, "clip_end", None) is not None)
-
 
     """ ==================
         BUTTON ACTIONS
@@ -371,8 +420,7 @@ class DownloadCard(QWidget):
         if self.on_cancel:
             self.on_cancel()
         self.cancel_btn.setEnabled(False)
-        # that will need to be translated at location update
-        self.status_label.setText("Cancelando...")
+        self.status_label.setText(tr("card.cancelling"))
 
     def _retry_download(self):
         if self.on_retry:
@@ -391,11 +439,9 @@ class DownloadCard(QWidget):
         elif url:
             QApplication.clipboard().setText(url)
         # fast feedback
-        # that will need to be translated at location update
-        self.copy_link_btn.setText("Link copiado!")
+        self.copy_link_btn.setText(tr("card.link_copied"))
         from PySide6.QtCore import QTimer
-        # that will need to be translated at location update
-        QTimer.singleShot(1500, lambda: self.copy_link_btn.setText("Copiar link"))
+        QTimer.singleShot(1500, lambda: self.copy_link_btn.setText(tr("card.copy_link")))
 
     def _open_file(self):
         path = self.item.file_path
